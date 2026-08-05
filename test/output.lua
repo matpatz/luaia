@@ -1,0 +1,1 @@
+local a=3;local b=function(c,d)return c+d;end;print(b(a,3));

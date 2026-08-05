@@ -1,0 +1,17 @@
+.history/
+
+*.luaurc
+!/.luaurc
+
+Packages/
+wally.lock
+
+.vscode/
+
+coverage/
+
+dist/
+build/
+
+temp/
+example

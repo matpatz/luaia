@@ -1,0 +1,15 @@
+[package]
+name = "yourname/luaia"
+version = "0.1.0"
+description = "A short description of your library"
+license = "GPL-3.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+
+[dependencies]
+# Add dependencies here, e.g.:
+# luau-polyfill = "github.com/roblox/luau-polyfill@0.1.0"
+
+[dev-dependencies]
+# Add dev dependencies here, e.g.:
+# testez = "roblox/testez@0.4.1"
