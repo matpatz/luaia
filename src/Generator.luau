@@ -10,6 +10,9 @@ local function Emit(str: string)
 end
 
 local function GenerateExpression(node): string
+	if node == nil then
+		return "nil"
+	end
 	if node.kind == "ExprConstantNil" then
 		return "nil"
 	elseif node.kind == "ExprConstantBool" then
@@ -19,7 +22,14 @@ local function GenerateExpression(node): string
 	elseif node.kind == "ExprConstantInteger" then
 		return tostring(node.low)
 	elseif node.kind == "ExprConstantString" then
-		return '"' .. string.gsub(node.value, '"', '\\"') .. '"'
+		local escaped = node.value
+		escaped = string.gsub(escaped, "\\", "\\\\")
+		escaped = string.gsub(escaped, '"', '\\"')
+		escaped = string.gsub(escaped, "\n", "\\n")
+		escaped = string.gsub(escaped, "\r", "\\r")
+		escaped = string.gsub(escaped, "\t", "\\t")
+		escaped = string.gsub(escaped, "\0", "\\0")
+		return '"' .. escaped .. '"'
 	elseif node.kind == "ExprLocal" then
 		return node["local"].name
 	elseif node.kind == "ExprGlobal" then
@@ -38,7 +48,7 @@ local function GenerateExpression(node): string
 			return func .. "(" .. table.concat(args, ",") .. ")"
 		end
 	elseif node.kind == "ExprIndexName" then
-		return GenerateExpression(node.expr) .. "." .. node.name
+		return GenerateExpression(node.expr) .. "." .. (node.name or "")
 	elseif node.kind == "ExprIndexExpr" then
 		return GenerateExpression(node.expr) .. "[" .. GenerateExpression(node.index) .. "]"
 	elseif node.kind == "ExprFunction" then
@@ -121,11 +131,17 @@ local function GenerateExpression(node): string
 		return "if " .. cond .. " then " .. thenExpr .. " else " .. elseExpr
 	elseif node.kind == "ExprInterpString" then
 		local parts = {}
-		for _, part in node.parts do
-			if part.kind == "ExprInterpStringBrace" then
-				table.insert(parts, "{" .. GenerateExpression(part.expr) .. "}")
-			elseif part.kind == "ExprInterpStringSegment" then
-				table.insert(parts, part.value)
+		for i, str in node.strings do
+			local escaped = str
+			escaped = string.gsub(escaped, "\\", "\\\\")
+			escaped = string.gsub(escaped, "`", "\\`")
+			escaped = string.gsub(escaped, "\n", "\\n")
+			escaped = string.gsub(escaped, "\r", "\\r")
+			escaped = string.gsub(escaped, "\t", "\\t")
+			escaped = string.gsub(escaped, "\0", "\\0")
+			table.insert(parts, escaped)
+			if i <= #node.expressions then
+				table.insert(parts, "{" .. GenerateExpression(node.expressions[i]) .. "}")
 			end
 		end
 		return "`" .. table.concat(parts) .. "`"

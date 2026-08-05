@@ -1,0 +1,7 @@
+add average time crap to README
+------------------------------------|------------------|
+| TIMES RAN:number | File Input Size | Time: time
+|   10x | 1mb | 1 second
+|   100x | 1mb | 1 second
+|   1000x | 1kb | 1 second
+------------------------------------|------------------|

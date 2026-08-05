@@ -109,6 +109,10 @@ local transformStatement: (typeof(node)) -> typeof(node)
 local transformStatementBlock: (typeof(node)) -> typeof(node)
 
 local function transformExpression(node): typeof(node)
+	if node == nil then
+		return nil
+	end
+
 	if node.kind == "ExprConstantNil" or node.kind == "ExprConstantBool"
 		or node.kind == "ExprConstantNumber" or node.kind == "ExprConstantInteger"
 		or node.kind == "ExprConstantString" or node.kind == "ExprVarargs" then
@@ -287,21 +291,15 @@ local function transformExpression(node): typeof(node)
 		}
 
 	elseif node.kind == "ExprInterpString" then
-		local newParts = {}
-		for _, part in node.parts do
-			if part.kind == "ExprInterpStringBrace" then
-				table.insert(newParts, {
-					kind = "ExprInterpStringBrace",
-					expr = transformExpression(part.expr),
-				})
-			else
-				table.insert(newParts, part)
-			end
+		local newExprs = {}
+		for _, expr in node.expressions do
+			table.insert(newExprs, transformExpression(expr))
 		end
 		return {
 			kind = "ExprInterpString",
 			location = node.location,
-			parts = newParts,
+			strings = node.strings,
+			expressions = newExprs,
 		}
 
 	elseif node.kind == "ExprGroup" then

@@ -95,6 +95,20 @@ end
 local a=10;local b=20;print(a+b);myFunc=function(c,d)local e=c+d;return e;end;
 ```
 
+## Benchmarks
+
+Measured on a 606KB file (20K lines of real Luau code):
+--
+Input: 606.4kb
+
+Runs | Total | Avg/Run
+-----|-------|--------
+   1x | 189ms | 189ms
+  10x | 1.90s | 190ms
+  50x | 9.23s | 185ms
+ 100x | 18.58s | 186ms
+--
+
 ## Project Structure
 
 ```
