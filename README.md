@@ -2,13 +2,6 @@
 
 Luau minifier written in Luau. Parses source code into an AST, optimizes it, and generates compact output.
 
-## Features
-
-- **Whitespace removal** — strips all unnecessary whitespace
-- **Variable renaming** — shortens local variable and parameter names
-- **Constant folding** — evaluates constant expressions at minify time
-- **Parenthesis removal** — drops unnecessary grouping parens
-
 ## Install
 
 Requires [lune](https://github.com/lune-org/lune) to run.
@@ -20,7 +13,7 @@ lune install luaia
 Or clone and use directly:
 
 ```
-git clone https://github.com/matpatz/luaia.git
+git clone https://github.com/matpat/luaia.git
 cd luaia
 lune run bin/cli.lua <file>
 ```
