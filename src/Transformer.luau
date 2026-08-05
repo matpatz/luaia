@@ -157,7 +157,10 @@ local function transformExpression(node): typeof(node)
 			kind = "ExprIndexName",
 			location = node.location,
 			expr = transformExpression(node.expr),
-			name = node.name,
+			index = node.index,
+			indexLocation = node.indexLocation,
+			opPosition = node.opPosition,
+			op = node.op,
 		}
 
 	elseif node.kind == "ExprIndexExpr" then
@@ -172,6 +175,21 @@ local function transformExpression(node): typeof(node)
 		local savedMap = table.clone(variableMap)
 		local savedCounter = variableCounter
 		local savedNames = table.clone(usedNames)
+
+		local selfParam = nil
+		if node.self then
+			if not variableMap[node.self.name] then
+				variableMap[node.self.name] = generateName()
+			end
+			selfParam = {
+				name = variableMap[node.self.name],
+				location = node.self.location,
+				functionDepth = node.self.functionDepth,
+				loopDepth = node.self.loopDepth,
+				isConst = node.self.isConst,
+				isExported = node.self.isExported,
+			}
+		end
 
 		local newParams = {}
 		for _, param in node.args do
@@ -200,6 +218,7 @@ local function transformExpression(node): typeof(node)
 			generics = node.generics,
 			genericPacks = node.genericPacks,
 			args = newParams,
+			self = selfParam,
 			body = newBody,
 			vararg = node.vararg,
 			attributes = node.attributes,
@@ -329,6 +348,7 @@ transformStatementBlock = function(node): typeof(node)
 		kind = "StatBlock",
 		location = node.location,
 		body = newStats,
+		hasEnd = node.hasEnd,
 	}
 end
 

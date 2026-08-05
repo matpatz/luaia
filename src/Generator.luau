@@ -37,29 +37,33 @@ local function GenerateExpression(node): string
 	elseif node.kind == "ExprVarargs" then
 		return "..."
 	elseif node.kind == "ExprCall" then
-		local func = GenerateExpression(node.func)
+		local func
 		local args = {}
 		for _, arg in node.args do
 			table.insert(args, GenerateExpression(arg))
 		end
-		if node.self then
-			return func .. "(" .. table.concat(args, ",") .. ")"
+		if node.self and node.func.kind == "ExprIndexName" then
+			func = GenerateExpression(node.func.expr) .. ":" .. node.func.index
 		else
-			return func .. "(" .. table.concat(args, ",") .. ")"
+			func = GenerateExpression(node.func)
 		end
+		return func .. "(" .. table.concat(args, ",") .. ")"
 	elseif node.kind == "ExprIndexName" then
-		return GenerateExpression(node.expr) .. "." .. (node.name or "")
+		return GenerateExpression(node.expr) .. "." .. node.index
 	elseif node.kind == "ExprIndexExpr" then
 		return GenerateExpression(node.expr) .. "[" .. GenerateExpression(node.index) .. "]"
 	elseif node.kind == "ExprFunction" then
 		local params = {}
+		if node.self then
+			table.insert(params, node.self.name)
+		end
 		for _, param in node.args do
 			table.insert(params, param.name)
 		end
 		if node.vararg then
 			table.insert(params, "...")
 		end
-		return "function(" .. table.concat(params, ",") .. ")" .. GenerateBlock(node.body) .. "end"
+		return "function(" .. table.concat(params, ",") .. ") " .. GenerateBlock(node.body) .. "end"
 	elseif node.kind == "ExprTable" then
 		local items = {}
 		for _, item in node.items do
@@ -87,40 +91,13 @@ local function GenerateExpression(node): string
 		end
 		return op .. GenerateExpression(node.operand)
 	elseif node.kind == "ExprBinary" then
-		local op = ""
-		if node.op == 0 then
-			op = "+"
-		elseif node.op == 1 then
-			op = "-"
-		elseif node.op == 2 then
-			op = "*"
-		elseif node.op == 3 then
-			op = "/"
-		elseif node.op == 4 then
-			op = "//"
-		elseif node.op == 5 then
-			op = "%"
-		elseif node.op == 6 then
-			op = "^"
-		elseif node.op == 7 then
-			op = ".."
-		elseif node.op == 8 then
-			op = "~="
-		elseif node.op == 9 then
-			op = "=="
-		elseif node.op == 10 then
-			op = "<"
-		elseif node.op == 11 then
-			op = "<="
-		elseif node.op == 12 then
-			op = ">"
-		elseif node.op == 13 then
-			op = ">="
-		elseif node.op == 14 then
-			op = "and"
-		elseif node.op == 15 then
-			op = "or"
-		end
+		local opMap = {
+			[0] = "+", [1] = "-", [2] = "*", [3] = "/", [4] = "//",
+			[5] = "%", [6] = "^", [7] = "..", [8] = "~=", [9] = "==",
+			[10] = "<", [11] = "<=", [12] = ">", [13] = ">=",
+			[14] = " and ", [15] = " or ",
+		}
+		local op = opMap[node.op] or " "
 		return GenerateExpression(node.left) .. op .. GenerateExpression(node.right)
 	elseif node.kind == "ExprTypeAssertion" then
 		return GenerateExpression(node.expr) .. "::" .. GenerateType(node.type)
@@ -135,6 +112,8 @@ local function GenerateExpression(node): string
 			local escaped = str
 			escaped = string.gsub(escaped, "\\", "\\\\")
 			escaped = string.gsub(escaped, "`", "\\`")
+			escaped = string.gsub(escaped, "{", "\\{")
+			escaped = string.gsub(escaped, "}", "\\}")
 			escaped = string.gsub(escaped, "\n", "\\n")
 			escaped = string.gsub(escaped, "\r", "\\r")
 			escaped = string.gsub(escaped, "\t", "\\t")
@@ -189,19 +168,23 @@ end
 
 local function GenerateStat(node): string
 	if node.kind == "StatBlock" then
-		return GenerateBlock(node)
+		if node.hasEnd then
+			return "do " .. GenerateBlock(node) .. "end"
+		else
+			return GenerateBlock(node)
+		end
 	elseif node.kind == "StatIf" then
 		local parts = {}
-		table.insert(parts, "if " .. GenerateExpression(node.condition) .. " then")
+		table.insert(parts, "if " .. GenerateExpression(node.condition) .. " then ")
 		table.insert(parts, GenerateBlock(node.thenbody))
 		local elseNode = node.elsebody
 		while elseNode do
 			if elseNode.kind == "StatIf" then
-				table.insert(parts, "elseif " .. GenerateExpression(elseNode.condition) .. " then")
+				table.insert(parts, "elseif " .. GenerateExpression(elseNode.condition) .. " then ")
 				table.insert(parts, GenerateBlock(elseNode.thenbody))
 				elseNode = elseNode.elsebody
 			elseif elseNode.kind == "StatBlock" then
-				table.insert(parts, "else")
+				table.insert(parts, "else ")
 				table.insert(parts, GenerateBlock(elseNode))
 				elseNode = nil
 			else
@@ -211,9 +194,9 @@ local function GenerateStat(node): string
 		table.insert(parts, "end")
 		return table.concat(parts, "")
 	elseif node.kind == "StatWhile" then
-		return "while " .. GenerateExpression(node.condition) .. " do" .. GenerateBlock(node.body) .. "end"
+		return "while " .. GenerateExpression(node.condition) .. " do " .. GenerateBlock(node.body) .. "end"
 	elseif node.kind == "StatRepeat" then
-		return "repeat" .. GenerateBlock(node.body) .. "until " .. GenerateExpression(node.condition)
+		return "repeat " .. GenerateBlock(node.body) .. "until " .. GenerateExpression(node.condition)
 	elseif node.kind == "StatBreak" then
 		return "break"
 	elseif node.kind == "StatContinue" then
@@ -223,7 +206,11 @@ local function GenerateStat(node): string
 		for _, value in node.list do
 			table.insert(values, GenerateExpression(value))
 		end
-		return "return " .. table.concat(values, ",")
+		if #values > 0 then
+			return "return " .. table.concat(values, ",")
+		else
+			return "return"
+		end
 	elseif node.kind == "StatExpr" then
 		return GenerateExpression(node.expr)
 	elseif node.kind == "StatLocal" then
@@ -241,7 +228,7 @@ local function GenerateStat(node): string
 			return "local " .. table.concat(names, ",")
 		end
 	elseif node.kind == "StatFor" then
-		return "for " .. node.var.name .. "=" .. GenerateExpression(node.from) .. "," .. GenerateExpression(node.to) .. "," .. (node.step and GenerateExpression(node.step) or "1") .. " do" .. GenerateBlock(node.body) .. "end"
+		return "for " .. node.var.name .. "=" .. GenerateExpression(node.from) .. "," .. GenerateExpression(node.to) .. "," .. (node.step and GenerateExpression(node.step) or "1") .. " do " .. GenerateBlock(node.body) .. "end"
 	elseif node.kind == "StatForIn" then
 		local names = {}
 		for _, name in node.vars do
@@ -251,7 +238,7 @@ local function GenerateStat(node): string
 		for _, value in node.values do
 			table.insert(values, GenerateExpression(value))
 		end
-		return "for " .. table.concat(names, ",") .. " in " .. table.concat(values, ",") .. " do" .. GenerateBlock(node.body) .. "end"
+		return "for " .. table.concat(names, ",") .. " in " .. table.concat(values, ",") .. " do " .. GenerateBlock(node.body) .. "end"
 	elseif node.kind == "StatAssign" then
 		local targets = {}
 		for _, target in node.vars do
@@ -313,7 +300,10 @@ function GenerateBlock(node): string
 
 	for _, stat in node.body do
 		Emit(GenerateStat(stat))
-		Emit(";")
+		local last = output[#output]
+		if not string.match(last, ";$") then
+			Emit(";")
+		end
 	end
 
 	local result = table.concat(output, "")
