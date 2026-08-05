@@ -107,7 +107,7 @@ Runs | Total | Avg/Run
   10x | 1.90s | 190ms
   50x | 9.23s | 185ms
  100x | 18.58s | 186ms
---
+
 
 ## Project Structure
 
