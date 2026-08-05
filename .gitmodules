@@ -1,0 +1,3 @@
+[submodule "tests/frktest"]
+	path = tests/frktest
+	url = https://github.com/itsfrank/frktest
