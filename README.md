@@ -65,10 +65,10 @@ cat script.luau | lune run bin/cli.lua --stdin
 local luaia = require("@luaia")
 
 local result, errors = luaia.Minify(source, {
-    MinifyVariables = true,  -- rename local variables (default: true)
-    ConstantFold = true,     -- fold constants (default: true)
     Rules = {
-        LocalizeGlobals = true, -- hoist global functions into locals (default: true)
+        MinifyVariables = true,  -- rename local variables (default: true)
+        ConstantFold = true,     -- fold constants (default: true)
+        LocalizeGlobals = true,  -- hoist global functions into locals (default: true)
     },
 })
 
@@ -87,6 +87,9 @@ Rules are individually toggleable optimizations. Enable them all by default; pas
 
 | Rule | CLI flag | Description |
 |------|----------|-------------|
+| `MinifyVariables` | `--no-rename` | Rename local variables to short names |
+| `ConstantFold` | `--no-fold` | Fold constant expressions |
+| `RemoveRedundantParens` | | Remove redundant parentheses |
 | `LocalizeGlobals` | `--no-localize` | Hoist global function references into local variables |
 
 ### LocalizeGlobals

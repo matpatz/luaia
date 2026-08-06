@@ -8,16 +8,21 @@ luaia.Parser = Parser
 luaia.Transformer = Transformer
 luaia.Generator = Generator
 
-function luaia.Minify(Source: string, Options: { MinifyVariables: boolean?, ConstantFold: boolean?, Rules: { LocalizeGlobals: boolean? }? }?): (string?, { string }?)
+function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boolean?, ConstantFold: boolean?, RemoveRedundantParens: boolean?, LocalizeGlobals: boolean? }? }?): (string?, { string }?)
 	if Options then
-		if Options.MinifyVariables ~= nil then
-			Transformer.Options.MinifyVariables = Options.MinifyVariables
-		end
-		if Options.ConstantFold ~= nil then
-			Transformer.Options.ConstantFold = Options.ConstantFold
-		end
-		if Options.Rules ~= nil and Options.Rules.LocalizeGlobals ~= nil then
-			Transformer.Options.Rules.LocalizeGlobals = Options.Rules.LocalizeGlobals
+		if Options.Rules then
+			if Options.Rules.MinifyVariables ~= nil then
+				Transformer.Options.Rules.MinifyVariables = Options.Rules.MinifyVariables
+			end
+			if Options.Rules.ConstantFold ~= nil then
+				Transformer.Options.Rules.ConstantFold = Options.Rules.ConstantFold
+			end
+			if Options.Rules.RemoveRedundantParens ~= nil then
+				Transformer.Options.Rules.RemoveRedundantParens = Options.Rules.RemoveRedundantParens
+			end
+			if Options.Rules.LocalizeGlobals ~= nil then
+				Transformer.Options.Rules.LocalizeGlobals = Options.Rules.LocalizeGlobals
+			end
 		end
 	end
 

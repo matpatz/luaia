@@ -3,10 +3,10 @@ local Utils = require("./utils")
 local Transformer = {}
 
 Transformer.Options = {
-	MinifyVariables = true,
-	ConstantFold = true,
-	RemoveRedundantParens = true,
 	Rules = {
+		MinifyVariables = true,
+		ConstantFold = true,
+		RemoveRedundantParens = true,
 		LocalizeGlobals = true,
 	},
 }
@@ -489,7 +489,7 @@ local function transformExpression(node): typeof(node)
 		local left = transformExpression(node.left)
 		local right = transformExpression(node.right)
 
-		if Transformer.Options.ConstantFold then
+		if Transformer.Options.Rules.ConstantFold then
 			if left.kind == "ExprConstantNumber" and right.kind == "ExprConstantNumber" then
 				local opName = opToString[node.op]
 				if opName then

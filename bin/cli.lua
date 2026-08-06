@@ -97,9 +97,9 @@ end
 
 local startTime = os.clock()
 local result, errors = luaia.Minify(source, {
-	ConstantFold = constantFold,
-	MinifyVariables = renameVars,
 	Rules = {
+		MinifyVariables = renameVars,
+		ConstantFold = constantFold,
 		LocalizeGlobals = localizeGlobals,
 	},
 })
