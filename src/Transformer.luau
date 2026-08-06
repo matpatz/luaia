@@ -108,6 +108,112 @@ local opToString = {
 	[14] = "and", [15] = "or",
 }
 
+local UNARY_PRECEDENCE = 11
+local PRIMARY_PRECEDENCE = 13
+
+local binaryPrecedence = {
+	[0] = 9, [1] = 9, [2] = 10, [3] = 10, [4] = 10, [5] = 10,
+	[6] = 12, [7] = 8, [8] = 3, [9] = 3, [10] = 3, [11] = 3,
+	[12] = 3, [13] = 3, [14] = 2, [15] = 1,
+}
+
+local rightAssociative = {
+	[6] = true, -- ^
+	[7] = true, -- ..
+}
+
+local alwaysSafeKinds = {
+	ExprConstantNil = true,
+	ExprConstantBool = true,
+	ExprConstantNumber = true,
+	ExprConstantInteger = true,
+	ExprConstantString = true,
+	ExprLocal = true,
+	ExprGlobal = true,
+	ExprIndexName = true,
+	ExprIndexExpr = true,
+	ExprInterpString = true,
+}
+
+local callablePrefixKinds = {
+	ExprLocal = true,
+	ExprGlobal = true,
+	ExprIndexName = true,
+	ExprIndexExpr = true,
+	ExprCall = true,
+	ExprInterpString = true,
+}
+
+local function isMultiValue(node): boolean
+	return node.kind == "ExprCall" or node.kind == "ExprVarargs"
+end
+
+local function stripAllGroups(node)
+	if Transformer.Options.Rules.RemoveRedundantParens then
+		while node ~= nil and node.kind == "ExprGroup" do
+			node = node.expr
+		end
+	end
+	return node
+end
+
+local function stripGroupList(node, isLast)
+	if not Transformer.Options.Rules.RemoveRedundantParens then
+		return node
+	end
+	if not isLast then
+		return stripAllGroups(node)
+	end
+	local stripped = stripAllGroups(node)
+	if stripped ~= node and isMultiValue(stripped) then
+		return node
+	end
+	return stripped
+end
+
+local function stripPrefixGroups(node, allowedKinds)
+	if not Transformer.Options.Rules.RemoveRedundantParens then
+		return node
+	end
+	while node ~= nil and node.kind == "ExprGroup" and allowedKinds[node.expr.kind] do
+		node = node.expr
+	end
+	return node
+end
+
+local function exprPrecedence(node): number
+	if node == nil then
+		return 0
+	elseif node.kind == "ExprBinary" then
+		return binaryPrecedence[node.op] or 0
+	elseif node.kind == "ExprUnary" then
+		return UNARY_PRECEDENCE
+	elseif node.kind == "ExprGroup" then
+		return exprPrecedence(node.expr)
+	end
+	return PRIMARY_PRECEDENCE
+end
+
+local function stripBinaryOperand(node, parentPrec, allowEqual)
+	if not Transformer.Options.Rules.RemoveRedundantParens then
+		return node
+	end
+	while node ~= nil and node.kind == "ExprGroup" do
+		local inner = node.expr
+		local prec = exprPrecedence(inner)
+		if prec > parentPrec or (allowEqual and prec == parentPrec) then
+			node = inner
+		else
+			break
+		end
+	end
+	return node
+end
+
+local function stripUnaryOperand(node)
+	return stripBinaryOperand(node, UNARY_PRECEDENCE, false)
+end
+
 local minimumGlobalUses = 1
 
 local function isLocalizableRef(node): boolean
@@ -259,8 +365,8 @@ local function walkGlobalUses(node, context, counts, chosen, globals, mutated, m
 		node.expr = walkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "ExprIfElse" then
 		node.condition = walkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.thenExpr = walkGlobalUses(node.thenExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.elseExpr = walkGlobalUses(node.elseExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.trueExpr = walkGlobalUses(node.trueExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.falseExpr = walkGlobalUses(node.falseExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "ExprInterpString" then
 		for i, expr in node.expressions do
 			node.expressions[i] = walkGlobalUses(expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
@@ -360,17 +466,20 @@ local function transformExpression(node): typeof(node)
 		return node
 
 	elseif node.kind == "ExprCall" then
+		local newArgs = {}
+		local count = #node.args
+		for i, arg in node.args do
+			local t = transformExpression(arg)
+			if Transformer.Options.Rules.RemoveRedundantParens then
+				t = stripGroupList(t, i == count)
+			end
+			table.insert(newArgs, t)
+		end
 		return {
 			kind = "ExprCall",
 			location = node.location,
-			func = transformExpression(node.func),
-			args = (function()
-				local newArgs = {}
-				for _, arg in node.args do
-					table.insert(newArgs, transformExpression(arg))
-				end
-				return newArgs
-			end)(),
+			func = stripPrefixGroups(transformExpression(node.func), callablePrefixKinds),
+			args = newArgs,
 			self = node.self,
 		}
 
@@ -378,7 +487,7 @@ local function transformExpression(node): typeof(node)
 		return {
 			kind = "ExprIndexName",
 			location = node.location,
-			expr = transformExpression(node.expr),
+			expr = stripPrefixGroups(transformExpression(node.expr), callablePrefixKinds),
 			index = node.index,
 			indexLocation = node.indexLocation,
 			opPosition = node.opPosition,
@@ -389,8 +498,8 @@ local function transformExpression(node): typeof(node)
 		return {
 			kind = "ExprIndexExpr",
 			location = node.location,
-			expr = transformExpression(node.expr),
-			index = transformExpression(node.index),
+			expr = stripPrefixGroups(transformExpression(node.expr), callablePrefixKinds),
+			index = stripAllGroups(transformExpression(node.index)),
 		}
 
 	elseif node.kind == "ExprFunction" then
@@ -451,23 +560,25 @@ local function transformExpression(node): typeof(node)
 
 	elseif node.kind == "ExprTable" then
 		local newItems = {}
-		for _, item in node.items do
+		local count = #node.items
+		local lastExpands = count > 0 and node.items[count].kind == "List"
+		for i, item in node.items do
 			if item.kind == "List" then
 				table.insert(newItems, {
 					kind = "List",
-					value = transformExpression(item.value),
+					value = stripGroupList(transformExpression(item.value), i == count and lastExpands),
 				})
 			elseif item.kind == "Record" then
 				table.insert(newItems, {
 					kind = "Record",
 					key = item.key,
-					value = transformExpression(item.value),
+					value = stripAllGroups(transformExpression(item.value)),
 				})
 			elseif item.kind == "General" then
 				table.insert(newItems, {
 					kind = "General",
-					key = item.key and transformExpression(item.key) or nil,
-					value = transformExpression(item.value),
+					key = item.key and stripAllGroups(transformExpression(item.key)) or nil,
+					value = stripAllGroups(transformExpression(item.value)),
 				})
 			end
 		end
@@ -482,12 +593,17 @@ local function transformExpression(node): typeof(node)
 			kind = "ExprUnary",
 			location = node.location,
 			op = node.op,
-			expr = transformExpression(node.expr),
+			expr = stripUnaryOperand(transformExpression(node.expr)),
 		}
 
 	elseif node.kind == "ExprBinary" then
 		local left = transformExpression(node.left)
 		local right = transformExpression(node.right)
+
+		if Transformer.Options.Rules.RemoveRedundantParens then
+			left = stripBinaryOperand(left, binaryPrecedence[node.op], not rightAssociative[node.op])
+			right = stripBinaryOperand(right, binaryPrecedence[node.op], rightAssociative[node.op])
+		end
 
 		if Transformer.Options.Rules.ConstantFold then
 			if left.kind == "ExprConstantNumber" and right.kind == "ExprConstantNumber" then
@@ -514,27 +630,21 @@ local function transformExpression(node): typeof(node)
 			right = right,
 		}
 
-	elseif node.kind == "ExprTypeAssertion" then
-		return {
-			kind = "ExprTypeAssertion",
-			location = node.location,
-			expr = transformExpression(node.expr),
-			type = node.type,
-		}
-
 	elseif node.kind == "ExprIfElse" then
 		return {
 			kind = "ExprIfElse",
 			location = node.location,
-			condition = transformExpression(node.condition),
-			thenExpr = transformExpression(node.thenExpr),
-			elseExpr = transformExpression(node.elseExpr),
+			condition = stripAllGroups(transformExpression(node.condition)),
+			trueExpr = stripAllGroups(transformExpression(node.trueExpr)),
+			falseExpr = stripAllGroups(transformExpression(node.falseExpr)),
+			hasThen = node.hasThen,
+			hasElse = node.hasElse,
 		}
 
 	elseif node.kind == "ExprInterpString" then
 		local newExprs = {}
 		for _, expr in node.expressions do
-			table.insert(newExprs, transformExpression(expr))
+			table.insert(newExprs, stripAllGroups(transformExpression(expr)))
 		end
 		return {
 			kind = "ExprInterpString",
@@ -543,11 +653,23 @@ local function transformExpression(node): typeof(node)
 			expressions = newExprs,
 		}
 
+	elseif node.kind == "ExprTypeAssertion" then
+		return {
+			kind = "ExprTypeAssertion",
+			location = node.location,
+			expr = stripAllGroups(transformExpression(node.expr)),
+			type = node.type,
+		}
+
 	elseif node.kind == "ExprGroup" then
+		local inner = transformExpression(node.expr)
+		if Transformer.Options.Rules.RemoveRedundantParens and alwaysSafeKinds[inner.kind] then
+			return inner
+		end
 		return {
 			kind = "ExprGroup",
 			location = node.location,
-			expr = transformExpression(node.expr),
+			expr = inner,
 		}
 
 	elseif node.kind == "ExprInstantiate" then
@@ -580,8 +702,13 @@ transformStatement = function(node): typeof(node)
 
 	elseif node.kind == "StatLocal" then
 		local newValues = {}
-		for _, value in node.values do
-			table.insert(newValues, transformExpression(value))
+		local count = #node.values
+		for i, value in node.values do
+			local t = transformExpression(value)
+			if Transformer.Options.Rules.RemoveRedundantParens then
+				t = stripGroupList(t, i == count)
+			end
+			table.insert(newValues, t)
 		end
 
 		local newNames = {}
@@ -622,7 +749,7 @@ transformStatement = function(node): typeof(node)
 		return {
 			kind = "StatIf",
 			location = node.location,
-			condition = transformExpression(node.condition),
+			condition = stripAllGroups(transformExpression(node.condition)),
 			thenbody = newThenBody,
 			elsebody = newElseBody,
 		}
@@ -631,7 +758,7 @@ transformStatement = function(node): typeof(node)
 		return {
 			kind = "StatWhile",
 			location = node.location,
-			condition = transformExpression(node.condition),
+			condition = stripAllGroups(transformExpression(node.condition)),
 			body = transformStatementBlock(node.body),
 		}
 
@@ -640,7 +767,7 @@ transformStatement = function(node): typeof(node)
 			kind = "StatRepeat",
 			location = node.location,
 			body = transformStatementBlock(node.body),
-			condition = transformExpression(node.condition),
+			condition = stripAllGroups(transformExpression(node.condition)),
 		}
 
 	elseif node.kind == "StatFor" then
@@ -658,9 +785,9 @@ transformStatement = function(node): typeof(node)
 				isConst = node.var.isConst,
 				isExported = node.var.isExported,
 			},
-			from = transformExpression(node.from),
-			to = transformExpression(node.to),
-			step = node.step and transformExpression(node.step) or nil,
+			from = stripAllGroups(transformExpression(node.from)),
+			to = stripAllGroups(transformExpression(node.to)),
+			step = node.step and stripAllGroups(transformExpression(node.step)) or nil,
 			body = transformStatementBlock(node.body),
 		}
 
@@ -681,8 +808,13 @@ transformStatement = function(node): typeof(node)
 		end
 
 		local newValues = {}
-		for _, value in node.values do
-			table.insert(newValues, transformExpression(value))
+		local count = #node.values
+		for i, value in node.values do
+			local t = transformExpression(value)
+			if Transformer.Options.Rules.RemoveRedundantParens then
+				t = stripGroupList(t, i == count)
+			end
+			table.insert(newValues, t)
 		end
 
 		return {
@@ -699,8 +831,13 @@ transformStatement = function(node): typeof(node)
 			table.insert(newTargets, transformExpression(target))
 		end
 		local newValues = {}
-		for _, value in node.values do
-			table.insert(newValues, transformExpression(value))
+		local count = #node.values
+		for i, value in node.values do
+			local t = transformExpression(value)
+			if Transformer.Options.Rules.RemoveRedundantParens then
+				t = stripGroupList(t, i == count)
+			end
+			table.insert(newValues, t)
 		end
 		return {
 			kind = "StatAssign",
@@ -715,13 +852,18 @@ transformStatement = function(node): typeof(node)
 			location = node.location,
 			op = node.op,
 			var = transformExpression(node.var),
-			value = transformExpression(node.value),
+			value = stripAllGroups(transformExpression(node.value)),
 		}
 
 	elseif node.kind == "StatReturn" then
 		local newValues = {}
-		for _, value in node.list do
-			table.insert(newValues, transformExpression(value))
+		local count = #node.list
+		for i, value in node.list do
+			local t = transformExpression(value)
+			if Transformer.Options.Rules.RemoveRedundantParens then
+				t = stripGroupList(t, i == count)
+			end
+			table.insert(newValues, t)
 		end
 		return {
 			kind = "StatReturn",
@@ -733,7 +875,7 @@ transformStatement = function(node): typeof(node)
 		return {
 			kind = "StatExpr",
 			location = node.location,
-			expr = transformExpression(node.expr),
+			expr = stripAllGroups(transformExpression(node.expr)),
 		}
 
 	elseif node.kind == "StatFunction" then

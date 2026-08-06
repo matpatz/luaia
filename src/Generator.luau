@@ -103,8 +103,8 @@ local function GenerateExpression(node): string
 		return GenerateExpression(node.expr) .. "::" .. GenerateType(node.type)
 	elseif node.kind == "ExprIfElse" then
 		local cond = GenerateExpression(node.condition)
-		local thenExpr = GenerateExpression(node.thenExpr)
-		local elseExpr = GenerateExpression(node.elseExpr)
+		local thenExpr = GenerateExpression(node.trueExpr)
+		local elseExpr = GenerateExpression(node.falseExpr)
 		return "if " .. cond .. " then " .. thenExpr .. " else " .. elseExpr
 	elseif node.kind == "ExprInterpString" then
 		local parts = {}
