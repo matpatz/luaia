@@ -38,6 +38,7 @@ luaia --stdin          Read from stdin
 | `-r` | Run the minified output with lune |
 | `--no-fold` | Disable constant folding |
 | `--no-rename` | Disable variable renaming |
+| `--no-localize` | Disable global function localization |
 | `--version` | Show version |
 | `--help` | Show help |
 
@@ -65,6 +66,9 @@ local luaia = require("@luaia")
 local result, errors = luaia.Minify(source, {
     MinifyVariables = true,  -- rename local variables (default: true)
     ConstantFold = true,     -- fold constants (default: true)
+    Rules = {
+        LocalizeGlobals = true, -- hoist global functions into locals (default: true)
+    },
 })
 
 if result then
@@ -75,6 +79,30 @@ else
     end
 end
 ```
+
+## Rules
+
+Rules are individually toggleable optimizations. Enable them all by default; pass `Rules = { <Rule> = false }` to disable a specific one, or `--no-<rule>` from the CLI.
+
+| Rule | CLI flag | Description |
+|------|----------|-------------|
+| `LocalizeGlobals` | `--no-localize` | Hoist global function references into local variables |
+
+### LocalizeGlobals
+
+Caches references to global functions in top-of-file locals so repeated lookups are skipped. Any global reference is hoisted automatically — plain globals (`print`, `pairs`, `setmetatable`, …) and module members (`math.floor`, `string.upper`, `table.insert`, …) — even when used once.
+
+```lua
+-- Input
+print(math.floor(3.7))
+print(math.floor(5.2))
+print(string.upper("hi"))
+
+-- Output (abbreviated)
+local a=print;local b=math.floor;local c=string.upper;a(b(3.7));a(b(5.2));a(c("hi"));
+```
+
+A global is left inline if it is ever reassigned in the file (e.g. `math.floor = ...` or `function math.floor() ... end`), so the alias never captures a stale value.
 
 ## Before/After
 

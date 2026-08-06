@@ -17,8 +17,10 @@ if #args == 0 then
 	print("Options:")
 	print("  -o <file>    Write output to file (default: stdout)")
 	print("  -r           Run the minified output")
+	print("  -t           Print time taken to minify")
 	print("  --no-fold    Disable constant folding")
 	print("  --no-rename  Disable variable renaming")
+	print("  --no-localize  Disable global function localization")
 	print("  --version    Show version")
 	print("  --help       Show this help message")
 	process.exit(1)
@@ -27,9 +29,11 @@ end
 local inputFile: string? = nil
 local outputFile: string? = nil
 local runOutput = false
+local timeMinify = false
 local fromStdin = false
 local constantFold = true
 local renameVars = true
+local localizeGlobals = true
 
 local i = 1
 while i <= #args do
@@ -49,8 +53,10 @@ while i <= #args do
 		print("Options:")
 		print("  -o <file>    Write output to file (default: stdout)")
 		print("  -r           Run the minified output")
+		print("  -t           Print time taken to minify")
 		print("  --no-fold    Disable constant folding")
 		print("  --no-rename  Disable variable renaming")
+		print("  --no-localize  Disable global function localization")
 		print("  --version    Show version")
 		print("  --help       Show this help message")
 		process.exit(0)
@@ -61,10 +67,14 @@ while i <= #args do
 		outputFile = args[i]
 	elseif arg == "-r" then
 		runOutput = true
+	elseif arg == "-t" then
+		timeMinify = true
 	elseif arg == "--no-fold" then
 		constantFold = false
 	elseif arg == "--no-rename" then
 		renameVars = false
+	elseif arg == "--no-localize" then
+		localizeGlobals = false
 	elseif arg:sub(1, 1) ~= "-" then
 		inputFile = arg
 	end
@@ -85,10 +95,19 @@ else
 	process.exit(1)
 end
 
+local startTime = os.clock()
 local result, errors = luaia.Minify(source, {
 	ConstantFold = constantFold,
 	MinifyVariables = renameVars,
+	Rules = {
+		LocalizeGlobals = localizeGlobals,
+	},
 })
+local elapsedMs = (os.clock() - startTime) * 1000
+
+if timeMinify then
+	print(string.format("Minified in %.1fms", elapsedMs))
+end
 
 if not result then
 	for _, err in errors do
