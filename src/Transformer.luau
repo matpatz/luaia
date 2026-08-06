@@ -40,7 +40,7 @@ local reservedNames = {
 	["typeof"] = true,
 	["declare"] = true,
 	["export"] = true,
-}
+} -- @native
 
 local function generateName(): string
 	variableCounter += 1
@@ -260,7 +260,7 @@ local function transformExpression(node): typeof(node)
 			kind = "ExprUnary",
 			location = node.location,
 			op = node.op,
-			operand = transformExpression(node.operand),
+			expr = transformExpression(node.expr),
 		}
 
 	elseif node.kind == "ExprBinary" then
@@ -518,7 +518,7 @@ transformStatement = function(node): typeof(node)
 		return {
 			kind = "StatFunction",
 			location = node.location,
-			name = node.name,
+			name = transformExpression(node.name),
 			func = transformExpression(node.func),
 			attributes = node.attributes,
 		}

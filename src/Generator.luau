@@ -89,7 +89,7 @@ local function GenerateExpression(node): string
 		elseif node.op == 2 then
 			op = "#"
 		end
-		return op .. GenerateExpression(node.operand)
+		return op .. GenerateExpression(node.expr)
 	elseif node.kind == "ExprBinary" then
 		local opMap = {
 			[0] = "+", [1] = "-", [2] = "*", [3] = "/", [4] = "//",
@@ -274,7 +274,7 @@ local function GenerateStat(node): string
 		return GenerateExpression(node.name) .. "=" .. func
 	elseif node.kind == "StatLocalFunction" then
 		local func = GenerateExpression(node.func)
-		return "local " .. node.name.name .. "=" .. func
+		return "local function " .. node.name.name .. func:sub(9)
 	elseif node.kind == "StatTypeAlias" then
 		return "type " .. node.name.value .. "=" .. GenerateType(node.type)
 	elseif node.kind == "StatTypeFunction" then

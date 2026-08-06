@@ -6,11 +6,11 @@ function Parser.Parse(source: string)
 	local Success, Result = LuauParser.parse(source, { storeCstData = false })
 
 	if not Success then
-		local errors = {}
-		for _, err in Result.errors do
-			table.insert(errors, err.message)
+		local Errors = {}
+		for _, Error in Result.errors do
+			table.insert(Errors, Error.message)
 		end
-		return nil, errors
+		return nil, Errors
 	end
 
 	return Result.root, nil
