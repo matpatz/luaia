@@ -4,13 +4,7 @@ Luau minifier written in Luau. Parses source code into an AST, optimizes it, and
 
 ## Install
 
-Requires [lune](https://github.com/lune-org/lune) to run.
-
-```
-lune install luaia
-```
-
-Or clone and use directly:
+Requires [lune](https://github.com/lune-org/lune) 0.10.x to run. luaia is pure Luau — there is no compile step; it runs directly from source.
 
 ```
 git clone https://github.com/matpat/luaia.git
@@ -18,16 +12,22 @@ cd luaia
 lune run bin/cli.lua <file>
 ```
 
+The repo ships a `rokit.toml` that pins lune 0.10.5. If you use [rokit](https://github.com/rojo-rbx/rokit), it will install the right version for you:
+
+```
+rokit install
+```
+
 ## Usage
 
 ### CLI
 
 ```
-luaia <file>           Minify a file (stdout)
-luaia <file> -o <out>  Write output to file
-luaia <file> -r        Minify and run output
-luaia <file> -o <out> -r  Write to file and run it
-luaia --stdin          Read from stdin
+lune run bin/cli.lua <file>                  Minify a file (stdout)
+lune run bin/cli.lua <file> -o <out>         Write output to file
+lune run bin/cli.lua <file> -r               Minify and run output
+lune run bin/cli.lua <file> -o <out> -r      Write to file and run it
+lune run bin/cli.lua --stdin                 Read from stdin
 ```
 
 #### Options
@@ -35,6 +35,7 @@ luaia --stdin          Read from stdin
 | Flag | Description |
 |------|-------------|
 | `-o <file>` | Write minified output to file |
+| `-t` | Logs time of minification |
 | `-r` | Run the minified output with lune |
 | `--no-fold` | Disable constant folding |
 | `--no-rename` | Disable variable renaming |
@@ -46,16 +47,16 @@ luaia --stdin          Read from stdin
 
 ```sh
 # Minify to stdout
-luaia script.luau
+lune run bin/cli.lua script.luau
 
 # Write to file
-luaia script.luau -o min.luau
+lune run bin/cli.lua script.luau -o min.luau
 
 # Minify and run
-luaia script.luau -r
+lune run bin/cli.lua script.luau -r
 
 # Pipe from stdin
-cat script.luau | luaia --stdin
+cat script.luau | lune run bin/cli.lua --stdin
 ```
 
 ### Library
@@ -125,16 +126,17 @@ local a=10;local b=20;print(a+b);myFunc=function(c,d)local e=c+d;return e;end;
 
 ## Benchmarks
 
-Measured on a 606KB file (20K lines of real Luau code):
+Input: 17.6kb
 --
-Input: 606.4kb
 
 Runs | Total | Avg/Run
 -----|-------|--------
-   1x | 189ms | 189ms
-  10x | 1.90s | 190ms
-  50x | 9.23s | 185ms
- 100x | 18.58s | 186ms
+   1x |   9ms |    9ms
+  10x |  90ms |    9ms
+  50x | 398ms |    8ms
+ 100x | 808ms |    8ms
+
+Measure yourself with `lune run bin/cli.lua test/input.lua -t`.
 
 
 ## Project Structure

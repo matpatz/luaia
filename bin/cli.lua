@@ -9,10 +9,10 @@ if #args == 0 then
 	print("luaia - Luau minifier")
 	print("")
 	print("Usage:")
-	print("  luaia <file>           Minify a file")
-	print("  luaia <file> -o <out>  Minify and write to output file")
-	print("  luaia <file> -r        Minify and run output")
-	print("  luaia --stdin          Minify from stdin")
+	print("  lune run bin/cli.lua <file>           Minify a file")
+	print("  lune run bin/cli.lua <file> -o <out>  Minify and write to output file")
+	print("  lune run bin/cli.lua <file> -r        Minify and run output")
+	print("  lune run bin/cli.lua --stdin          Minify from stdin")
 	print("")
 	print("Options:")
 	print("  -o <file>    Write output to file (default: stdout)")
@@ -45,10 +45,10 @@ while i <= #args do
 		print("luaia - Luau minifier")
 		print("")
 		print("Usage:")
-		print("  luaia <file>           Minify a file")
-		print("  luaia <file> -o <out>  Minify and write to output file")
-		print("  luaia <file> -r        Minify and run output")
-		print("  luaia --stdin          Minify from stdin")
+		print("  lune run bin/cli.lua <file>           Minify a file")
+		print("  lune run bin/cli.lua <file> -o <out>  Minify and write to output file")
+		print("  lune run bin/cli.lua <file> -r        Minify and run output")
+		print("  lune run bin/cli.lua --stdin          Minify from stdin")
 		print("")
 		print("Options:")
 		print("  -o <file>    Write output to file (default: stdout)")
@@ -105,10 +105,6 @@ local result, errors = luaia.Minify(source, {
 })
 local elapsedMs = (os.clock() - startTime) * 1000
 
-if timeMinify then
-	print(string.format("Minified in %.1fms", elapsedMs))
-end
-
 if not result then
 	for _, err in errors do
 		warn("Error: " .. err)
@@ -140,4 +136,8 @@ if runOutput then
 	end
 elseif not outputFile then
 	print(result)
+end
+
+if timeMinify then
+	print(string.format("Minified in %.1fms", elapsedMs))
 end
