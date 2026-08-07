@@ -1,29 +1,3 @@
--- dead code elimination
-
-```lua
-local a = false
-if a then
-    print(true)
-end
-```
-becomes
-```lua
-```
-
-```lua
-local a = false
-local function check()
-    if a then
-        print(true)
-    end
-end
-
-a = true
-check()
-```
-
-should not change
-
 -- new --optimize rule:
 
 typeof is a newer function that supports more types than type, so we can replace type with typeof in some cases.

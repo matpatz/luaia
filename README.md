@@ -4,6 +4,24 @@ Luau minifier written in Luau. Parses source code into an AST, optimizes it, and
 
 ## Install
 
+### With Rokit
+
+luaia is published as a [Rokit](https://github.com/rojo-rbx/rokit) tool. Add it to your project's `rokit.toml`:
+
+```toml
+[tools]
+luaia = "matpat/luaia@0.1.0"
+```
+
+Then run `rokit install` and use it as a standalone `luaia` command:
+
+```
+luaia <file>
+luaia <file> -o <out>
+```
+
+### From source
+
 Requires [lune](https://github.com/lune-org/lune) 0.10.x to run. luaia is pure Luau — there is no compile step; it runs directly from source.
 
 ```

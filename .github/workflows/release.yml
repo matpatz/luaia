@@ -1,0 +1,72 @@
+name: Release
+
+# Builds luaia for all supported platforms and publishes it to a GitHub
+# release whenever a tag like `v0.1.0` is pushed. The zipped binaries are
+# named in Rokit's expected format so `rokit add matpat/luaia` works out of
+# the box.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: meta
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Install Lune directly instead of via `rokit install`, because
+      # rokit.toml lists luaia itself and the release it points at is the one
+      # we are creating right now (circular dependency).
+      - name: Install Lune 0.10.5
+        run: |
+          curl -fsSL \
+            https://github.com/lune-org/lune/releases/download/v0.10.5/lune-0.10.5-linux-x86_64.zip \
+            -o lune.zip
+          unzip -o lune.zip -d "$HOME/.lune-bin"
+          echo "$HOME/.lune-bin" >> "$GITHUB_PATH"
+
+      - name: Build & package binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          mkdir -p release
+
+          # Cross-compile every supported platform with lune build.
+          # Each binary is placed in its own folder so the file inside the
+          # archive is always named `luaia` / `luaia.exe`, which is what
+          # Rokit looks for when extracting the tool.
+          for target in \
+            windows-x86_64 \
+            windows-aarch64 \
+            linux-x86_64 \
+            linux-aarch64 \
+            macos-x86_64 \
+            macos-aarch64
+          do
+            case "$target" in
+              windows-*) bin="luaia.exe" ;;
+              *)         bin="luaia" ;;
+            esac
+
+            lune build bin/cli.lua --target "$target" -o "release/$target/$bin"
+
+            (cd "release/$target" && zip -q "../luaia-${VERSION}-${target}.zip" "$bin")
+          done
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
+          generate_release_notes: true
