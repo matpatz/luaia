@@ -33,7 +33,9 @@ local function split(p: string): { string }
 end
 
 -- Collapses ".", ".." and duplicate slashes, forward-slash only.
+-- Keeps a leading "/" so absolute paths stay absolute (Linux CI).
 local function normalize(p: string): string
+	local isAbsolute = p:sub(1, 1) == "/"
 	local out: { string } = {}
 	for _, part in split(p:gsub("\\", "/")) do
 		if part == "." or part == "" then
@@ -48,7 +50,11 @@ local function normalize(p: string): string
 			out[#out + 1] = part
 		end
 	end
-	return table.concat(out, "/")
+	local joined = table.concat(out, "/")
+	if isAbsolute then
+		return "/" .. joined
+	end
+	return joined
 end
 
 local function dirname(p: string): string
