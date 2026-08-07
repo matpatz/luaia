@@ -1,6 +1,7 @@
 local process = require("@lune/process")
 local fs = require("@lune/fs")
 local stdio = require("@lune/stdio")
+-- local DateTime = require("@lune/datetime")
 local luaia = require("@luaia")
 
 local args = process.args
@@ -67,12 +68,12 @@ while i <= #args do
 		print("  --help       Show this help message")
 		process.exit(0)
 	elseif arg == "--stdin" then
-		fromStdin = true
+		Options.FromStdin = true
 	elseif arg == "-o" then
 		i += 1
-		outputFile = args[i]
+		Options.OutputFile = args[i]
 	elseif arg == "-r" then
-		runOutput = true
+		Options.RunOutput = true
 	elseif arg == "-t" then
 		Options.TimeMinify = true
 	elseif arg == "--no-fold" then
@@ -103,7 +104,8 @@ else
 	process.exit(1)
 end
 
-local Start = os.clock()
+local StartClock = os.clock()
+
 local Result, Errors = luaia.Minify(source, {
 	Rules = {
 		MinifyVariables = Options.RenameVariables,
@@ -112,7 +114,7 @@ local Result, Errors = luaia.Minify(source, {
 		LocalizeBooleans = Options.LocalizeBooleans,
 	},
 })
-local Elapsed = (os.clock() - Start) * 1000
+local ElapsedSeconds = os.clock() - StartClock
 
 if not Result then
 	for _, Error in Errors do
@@ -126,7 +128,7 @@ if Options.OutputFile then
 end
 
 if Options.RunOutput then
-	local runPath = Options.OutputFile or (process.cwd() .. "/__luaia_tmp__.luau")
+	local runPath = Options.OutputFile or (process.cwd .. "/__luaia_tmp__.luau")
 	if not Options.OutputFile then
 		fs.writeFile(runPath, Result)
 	end
@@ -148,5 +150,6 @@ elseif not Options.OutputFile then
 end
 
 if Options.TimeMinify then
-	print(string.format("Minified in %.1fms", Elapsed))
+    local ns = ElapsedSeconds * 1e9
+    print(string.format("Minified in %d ns (%.1f ms)", ns, ElapsedSeconds * 1000))
 end
