@@ -20,6 +20,8 @@ luaia <file>
 luaia <file> -o <out>
 ```
 
+To update when a new version is released, bump the version in `rokit.toml` (or run `rokit update matpatz/luaia`) and then run `rokit install`. Note that `rokit update` only changes the pinned version in the manifest — `rokit install` is what actually downloads and links the new binary.
+
 ### Standalone binary
 
 Prebuilt binaries for every platform are attached to each [release](https://github.com/matpatz/luaia/releases) — no Lune or Rokit needed. Download the archive for your system, unzip it, and run.
