@@ -121,21 +121,21 @@ test.suite("luaia", function()
 		end)
 
 		test.case("should collapse boolean returns", function()
-			local result, errors = luaia.Minify("local function f(a, b) if a == b then return true else return false end end")
+			local result, errors = luaia.Minify("local function f(a, b) if a == b then return true else return false end end", { Rules = { DeadCodeElimination = false } })
 			check.not_nil(result)
 			check.equal(errors, nil)
 			check.not_nil(string.find(result, "return [a-z]+==[a-z]+", 1))
 		end)
 
 		test.case("should collapse tail boolean returns", function()
-			local result, errors = luaia.Minify("local function f(n) if n == 2 then return true end return false end")
+			local result, errors = luaia.Minify("local function f(n) if n == 2 then return true end return false end", { Rules = { DeadCodeElimination = false } })
 			check.not_nil(result)
 			check.equal(errors, nil)
 			check.not_nil(string.find(result, "return [a-z]+==2", 1))
 		end)
 
 		test.case("should keep non-boolean conditions in boolean returns", function()
-			local result, errors = luaia.Minify("local function f(x) if x then return true else return false end end")
+			local result, errors = luaia.Minify("local function f(x) if x then return true else return false end end", { Rules = { DeadCodeElimination = false } })
 			check.not_nil(result)
 			check.equal(errors, nil)
 			check.not_nil(string.find(result, "if [a-z]+ then return true", 1))
@@ -174,12 +174,91 @@ local function j(list, value)
 	return false
 end
 ]]
-			local result, errors = luaia.Minify(source, { Rules = { LocalizeBooleans = false } })
+			local result, errors = luaia.Minify(source, { Rules = { LocalizeBooleans = false, DeadCodeElimination = false } })
 			check.not_nil(result)
 			check.equal(errors, nil)
 			check.not_nil(string.find(result, "local [a-z],[a-z]=true,false", 1))
 			check.equal(string.find(result, "return true", 1), nil)
 			check.equal(string.find(result, "return false", 1), nil)
+		end)
+	end)
+
+	test.suite("dead code elimination", function()
+		test.case("should eliminate constant-false local conditions and unused locals", function()
+			local result, errors = luaia.Minify("local a = false\nif a then print(true) end")
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(result, "")
+		end)
+
+		test.case("should not fold conditions in functions that capture mutated locals", function()
+			local source = [[
+local a = false
+local function check()
+	if a then
+		print(true)
+	end
+end
+a = true
+check()
+]]
+			local result, errors = luaia.Minify(source)
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "if ", 1))
+		end)
+
+		test.case("should eliminate literal false branches", function()
+			local result, errors = luaia.Minify("if false then print(1) end\nprint(2)", { Rules = { LocalizeGlobals = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "print(1)", 1, true), nil)
+			check.not_nil(string.find(result, "print(2)", 1, true))
+		end)
+
+		test.case("should fold constant true branches", function()
+			local result, errors = luaia.Minify("if true then print(1) end", { Rules = { LocalizeGlobals = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "print(1)", 1, true))
+			check.equal(string.find(result, "if ", 1, true), nil)
+		end)
+
+		test.case("should remove while false loops", function()
+			local result, errors = luaia.Minify("while false do print(1) end\nprint(2)", { Rules = { LocalizeGlobals = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "print(1)", 1, true), nil)
+			check.not_nil(string.find(result, "print(2)", 1, true))
+		end)
+
+		test.case("should remove unused local functions", function()
+			local result, errors = luaia.Minify("local function helper() print('x') end\nprint('y')", { Rules = { LocalizeGlobals = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "helper", 1, true), nil)
+			check.not_nil(string.find(result, "print(\"y\")", 1, true))
+		end)
+
+		test.case("should keep side-effectful initializers", function()
+			local result, errors = luaia.Minify("local a = print('hi')")
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "print", 1, true))
+		end)
+
+		test.case("should not remove used locals", function()
+			local result, errors = luaia.Minify("local a = false\nif a then print(1) end\na = true\nprint(a)")
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "print", 1, true))
+		end)
+
+		test.case("should be disableable", function()
+			local result, errors = luaia.Minify("local a = false\nif a then print(true) end", { Rules = { DeadCodeElimination = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "if ", 1))
 		end)
 	end)
 

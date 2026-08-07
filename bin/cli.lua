@@ -23,6 +23,7 @@ if #args == 0 then
 	print("  --no-rename  Disable variable renaming")
 	print("  --no-localize  Disable global function localization")
 	print("  --no-bools     Disable boolean literal localization")
+	print("  --no-dce       Disable dead code elimination")
 	print("  --version    Show version")
 	print("  --help       Show this help message")
 	process.exit(1)
@@ -39,6 +40,7 @@ local Options = {
 	RenameVariables = true,
 	LocalizeGlobals = true,
 	LocalizeBooleans = true,
+	DeadCodeElimination = true,
 }
 
 local i = 1
@@ -64,6 +66,7 @@ while i <= #args do
 		print("  --no-rename  Disable variable renaming")
 		print("  --no-localize  Disable global function localization")
 		print("  --no-bools     Disable boolean literal localization")
+		print("  --no-dce       Disable dead code elimination")
 		print("  --version    Show version")
 		print("  --help       Show this help message")
 		process.exit(0)
@@ -84,6 +87,8 @@ while i <= #args do
 		Options.LocalizeGlobals = false
 	elseif arg == "--no-bools" then
 		Options.LocalizeBooleans = false
+	elseif arg == "--no-dce" then
+		Options.DeadCodeElimination = false
 	elseif arg:sub(1, 1) ~= "-" then
 		Options.InputFile = arg
 	end
@@ -112,6 +117,7 @@ local Result, Errors = luaia.Minify(source, {
 		ConstantFold = Options.ConstantFold,
 		LocalizeGlobals = Options.LocalizeGlobals,
 		LocalizeBooleans = Options.LocalizeBooleans,
+		DeadCodeElimination = Options.DeadCodeElimination,
 	},
 })
 local ElapsedSeconds = os.clock() - StartClock

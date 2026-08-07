@@ -41,6 +41,7 @@ lune run bin/cli.lua --stdin                 Read from stdin
 | `--no-rename` | Disable variable renaming |
 | `--no-localize` | Disable global function localization |
 | `--no-bools` | Disable boolean literal localization |
+| `--no-dce` | Disable dead code elimination |
 | `--version` | Show version |
 | `--help` | Show help |
 
@@ -71,6 +72,7 @@ local result, errors = luaia.Minify(source, {
         ConstantFold = true,     -- fold constants (default: true)
         LocalizeGlobals = true,  -- hoist global functions into locals (default: true)
         LocalizeBooleans = true, -- hoist true/false literals into locals (default: true)
+        DeadCodeElimination = true, -- remove dead code (default: true)
     },
 })
 
@@ -94,6 +96,7 @@ Rules are individually toggleable optimizations. Enable them all by default; pas
 | `RemoveRedundantParens` | | Remove redundant parentheses |
 | `LocalizeGlobals` | `--no-localize` | Hoist global function references into local variables |
 | `LocalizeBooleans` | `--no-bools` | Replace repeated `true`/`false` literals with aliased locals |
+| `DeadCodeElimination` | `--no-dce` | Fold constant conditions, drop dead branches, and remove unused locals |
 
 ### LocalizeGlobals
 
@@ -122,6 +125,25 @@ local flags = { true, false, true, false, true, false, true, false }
 -- Output (abbreviated)
 local a,b=true,false;local flags={a,b,a,b,a,b,a,b};
 ```
+
+### DeadCodeElimination
+
+Tracks which locals are never used and folds branches that can be proven dead at compile time. Local values are only treated as constant when they are never assigned after initialization, so captured variables and values changed by function calls are left alone.
+
+```lua
+-- Input
+local a = false
+if a then
+    print("a is true")
+else
+    print("a is false")
+end
+
+-- Output
+local a=print;a("a is false");
+```
+
+Side-effectful initializers are preserved (e.g. `local x = print("hi")`), and a branch is only removed when its condition is a known constant, so behavior never changes.
 
 ## Before/After
 
