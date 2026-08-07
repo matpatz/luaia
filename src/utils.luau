@@ -1,5 +1,8 @@
 local Utils = {}
 
+local math_huge = math.huge
+local string_gsub = string.gsub
+
 function Utils.IsKeyword(name: string): boolean
 	local keywords = {
 		["and"] = true,
@@ -43,16 +46,16 @@ function Utils.NumberToString(num: number): string
 	if num ~= num then
 		return "-0/0"
 	end
-	if num == math.huge then
+	if num == math_huge then
 		return "1/0"
 	end
-	if num == -math.huge then
+	if num == -math_huge then
 		return "-1/0"
 	end
 
 	local str = tostring(num)
-	str = string.gsub(str, "%.0$", "")
-	str = string.gsub(str, "e%+", "e")
+	str = string_gsub(str, "%.0$", "")
+	str = string_gsub(str, "e%+", "e")
 	return str
 end
 

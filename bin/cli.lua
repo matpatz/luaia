@@ -27,15 +27,18 @@ if #args == 0 then
 	process.exit(1)
 end
 
-local inputFile: string? = nil
-local outputFile: string? = nil
-local runOutput = false
-local timeMinify = false
-local fromStdin = false
-local constantFold = true
-local renameVars = true
-local localizeGlobals = true
-local localizeBools = true
+local Options = {
+	InputFile = nil,
+	OutputFile = nil,
+	RunOutput = false,
+	TimeMinify = false,
+	FromStdin = false,
+
+	ConstantFold = true,
+	RenameVariables = true,
+	LocalizeGlobals = true,
+	LocalizeBooleans = true,
+}
 
 local i = 1
 while i <= #args do
@@ -71,17 +74,17 @@ while i <= #args do
 	elseif arg == "-r" then
 		runOutput = true
 	elseif arg == "-t" then
-		timeMinify = true
+		Options.TimeMinify = true
 	elseif arg == "--no-fold" then
-		constantFold = false
+		Options.ConstantFold = false
 	elseif arg == "--no-rename" then
-		renameVars = false
+		Options.RenameVariables = false
 	elseif arg == "--no-localize" then
-		localizeGlobals = false
+		Options.LocalizeGlobals = false
 	elseif arg == "--no-bools" then
-		localizeBools = false
+		Options.LocalizeBooleans = false
 	elseif arg:sub(1, 1) ~= "-" then
-		inputFile = arg
+		Options.InputFile = arg
 	end
 	i += 1
 end
@@ -89,61 +92,61 @@ end
 local source: string
 if fromStdin then
 	source = stdio.read() or ""
-elseif inputFile then
-	if not fs.isFile(inputFile) then
-		warn("Error: file not found: " .. inputFile)
+elseif Options.InputFile then
+	if not fs.isFile(Options.InputFile) then
+		warn("Error: file not found: " .. Options.InputFile)
 		process.exit(1)
 	end
-	source = fs.readFile(inputFile)
+	source = fs.readFile(Options.InputFile)
 else
 	warn("Error: no input. Provide a file or --stdin")
 	process.exit(1)
 end
 
-local startTime = os.clock()
-local result, errors = luaia.Minify(source, {
+local Start = os.clock()
+local Result, Errors = luaia.Minify(source, {
 	Rules = {
-		MinifyVariables = renameVars,
-		ConstantFold = constantFold,
-		LocalizeGlobals = localizeGlobals,
-		LocalizeBooleans = localizeBools,
+		MinifyVariables = Options.RenameVariables,
+		ConstantFold = Options.ConstantFold,
+		LocalizeGlobals = Options.LocalizeGlobals,
+		LocalizeBooleans = Options.LocalizeBooleans,
 	},
 })
-local elapsedMs = (os.clock() - startTime) * 1000
+local Elapsed = (os.clock() - Start) * 1000
 
-if not result then
-	for _, err in errors do
-		warn("Error: " .. err)
+if not Result then
+	for _, Error in Errors do
+		warn("Error: " .. Error)
 	end
 	process.exit(1)
 end
 
-if outputFile then
-	fs.writeFile(outputFile, result)
+if Options.OutputFile then
+	fs.writeFile(Options.OutputFile, Result)
 end
 
-if runOutput then
-	local runPath = outputFile or (process.cwd .. "/__luaia_tmp__.luau")
-	if not outputFile then
-		fs.writeFile(runPath, result)
+if Options.RunOutput then
+	local runPath = Options.OutputFile or (process.cwd() .. "/__luaia_tmp__.luau")
+	if not Options.OutputFile then
+		fs.writeFile(runPath, Result)
 	end
-	local execResult = process.exec("lune", { "run", runPath })
-	if not outputFile then
+	local OutputResult = process.exec("lune", { "run", runPath })
+	if not Options.OutputFile then
 		fs.removeFile(runPath)
 	end
-	if execResult.stdout ~= "" then
-		print(execResult.stdout)
+	if OutputResult.stdout ~= "" then
+		print(OutputResult.stdout)
 	end
-	if execResult.stderr ~= "" then
-		warn(execResult.stderr)
+	if OutputResult.stderr ~= "" then
+		warn(OutputResult.stderr)
 	end
-	if not execResult.ok then
+	if not OutputResult.ok then
 		process.exit(1)
 	end
-elseif not outputFile then
-	print(result)
+elseif not Options.OutputFile then
+	print(Result)
 end
 
-if timeMinify then
-	print(string.format("Minified in %.1fms", elapsedMs))
+if Options.TimeMinify then
+	print(string.format("Minified in %.1fms", Elapsed))
 end

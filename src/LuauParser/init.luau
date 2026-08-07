@@ -21,6 +21,11 @@ local LuauParseErrorLimit = 100
 
 local Confusables = require"@self/Confusables"
 local Syntax = require"@self/Syntax"
+local string = string
+local table = table
+local buffer = buffer
+local bit32 = bit32
+local vector = vector
 
 local EmptyArray = table.freeze({})
 

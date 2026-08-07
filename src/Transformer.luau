@@ -2,6 +2,14 @@ local Utils = require("./utils")
 
 local Transformer = {}
 
+local math_floor = math.floor
+local string_char = string.char
+local string_find = string.find
+local string_sub = string.sub
+local table_clone = table.clone
+local table_insert = table.insert
+local table_sort = table.sort
+
 Transformer.Options = {
 	Rules = {
 		MinifyVariables = true,
@@ -12,11 +20,11 @@ Transformer.Options = {
 	},
 }
 
-local variableMap: { [string]: string } = {}
-local variableCounter = 0
-local usedNames: { [string]: boolean } = {}
+local VariableMap: { [string]: string } = {}
+local VariableCounter = 0
+local UsedNames: { [string]: boolean } = {}
 
-local reservedNames = {
+local ReservedNames = {
 	["self"] = true,
 	["true"] = true,
 	["false"] = true,
@@ -46,9 +54,9 @@ local reservedNames = {
 	["export"] = true,
 } -- @native
 
-local function generateName(): string
-	variableCounter += 1
-	local count = variableCounter
+local function GenerateName(): string
+	VariableCounter += 1
+	local count = VariableCounter
 	local name = ""
 	local base = count
 
@@ -56,26 +64,26 @@ local function generateName(): string
 		base -= 1
 		local char = base % 52
 		if char < 26 then
-			name = string.char(97 + char) .. name
+			name = string_char(97 + char) .. name
 		else
-			name = string.char(65 + char - 26) .. name
+			name = string_char(65 + char - 26) .. name
 		end
-		base = math.floor(base / 52)
+		base = math_floor(base / 52)
 	end
 
 	if #name == 0 then
 		name = "a"
 	end
 
-	if reservedNames[name] or usedNames[name] then
-		return generateName()
+	if ReservedNames[name] or UsedNames[name] then
+		return GenerateName()
 	end
 
-	usedNames[name] = true
+	UsedNames[name] = true
 	return name
 end
 
-local function foldConstantBinary(left: number, op: string, right: number): number?
+local function FoldConstantBinary(left: number, op: string, right: number): number?
 	if op == "+" then
 		return left + right
 	elseif op == "-" then
@@ -94,7 +102,7 @@ local function foldConstantBinary(left: number, op: string, right: number): numb
 		return left ^ right
 	elseif op == "//" then
 		if right ~= 0 then
-			return math.floor(left / right)
+			return math_floor(left / right)
 		end
 	elseif op == ".." then
 		return nil
@@ -102,28 +110,28 @@ local function foldConstantBinary(left: number, op: string, right: number): numb
 	return nil
 end
 
-local opToString = {
+local OpToString = {
 	[0] = "+", [1] = "-", [2] = "*", [3] = "/", [4] = "//",
 	[5] = "%", [6] = "^", [7] = "..", [8] = "~=", [9] = "==",
 	[10] = "<", [11] = "<=", [12] = ">", [13] = ">=",
 	[14] = "and", [15] = "or",
 }
 
-local UNARY_PRECEDENCE = 11
-local PRIMARY_PRECEDENCE = 13
+local UnaryPrecedence = 11
+local PrimaryPrecedence = 13
 
-local binaryPrecedence = {
+local BinaryPrecedence = {
 	[0] = 9, [1] = 9, [2] = 10, [3] = 10, [4] = 10, [5] = 10,
 	[6] = 12, [7] = 8, [8] = 3, [9] = 3, [10] = 3, [11] = 3,
 	[12] = 3, [13] = 3, [14] = 2, [15] = 1,
 }
 
-local rightAssociative = {
+local RightAssociative = {
 	[6] = true, -- ^
 	[7] = true, -- ..
 }
 
-local alwaysSafeKinds = {
+local AlwaysSafeKinds = {
 	ExprConstantNil = true,
 	ExprConstantBool = true,
 	ExprConstantNumber = true,
@@ -136,7 +144,7 @@ local alwaysSafeKinds = {
 	ExprInterpString = true,
 }
 
-local callablePrefixKinds = {
+local CallablePrefixKinds = {
 	ExprLocal = true,
 	ExprGlobal = true,
 	ExprIndexName = true,
@@ -145,11 +153,11 @@ local callablePrefixKinds = {
 	ExprInterpString = true,
 }
 
-local function isMultiValue(node): boolean
+local function IsMultiValue(node): boolean
 	return node.kind == "ExprCall" or node.kind == "ExprVarargs"
 end
 
-local function stripAllGroups(node)
+local function StripAllGroups(node)
 	if Transformer.Options.Rules.RemoveRedundantParens then
 		while node ~= nil and node.kind == "ExprGroup" do
 			node = node.expr
@@ -158,21 +166,21 @@ local function stripAllGroups(node)
 	return node
 end
 
-local function stripGroupList(node, isLast)
+local function StripGroupList(node, isLast)
 	if not Transformer.Options.Rules.RemoveRedundantParens then
 		return node
 	end
 	if not isLast then
-		return stripAllGroups(node)
+		return StripAllGroups(node)
 	end
-	local stripped = stripAllGroups(node)
-	if stripped ~= node and isMultiValue(stripped) then
+	local stripped = StripAllGroups(node)
+	if stripped ~= node and IsMultiValue(stripped) then
 		return node
 	end
 	return stripped
 end
 
-local function stripPrefixGroups(node, allowedKinds)
+local function StripPrefixGroups(node, allowedKinds)
 	if not Transformer.Options.Rules.RemoveRedundantParens then
 		return node
 	end
@@ -182,28 +190,28 @@ local function stripPrefixGroups(node, allowedKinds)
 	return node
 end
 
-local transformExpressionPrefix
+local TransformExpressionPrefix
 
-local function exprPrecedence(node): number
+local function ExprPrecedence(node): number
 	if node == nil then
 		return 0
 	elseif node.kind == "ExprBinary" then
-		return binaryPrecedence[node.op] or 0
+		return BinaryPrecedence[node.op] or 0
 	elseif node.kind == "ExprUnary" then
-		return UNARY_PRECEDENCE
+		return UnaryPrecedence
 	elseif node.kind == "ExprGroup" then
-		return exprPrecedence(node.expr)
+		return ExprPrecedence(node.expr)
 	end
-	return PRIMARY_PRECEDENCE
+	return PrimaryPrecedence
 end
 
-local function stripBinaryOperand(node, parentPrec, allowEqual)
+local function StripBinaryOperand(node, parentPrec, allowEqual)
 	if not Transformer.Options.Rules.RemoveRedundantParens then
 		return node
 	end
 	while node ~= nil and node.kind == "ExprGroup" do
 		local inner = node.expr
-		local prec = exprPrecedence(inner)
+		local prec = ExprPrecedence(inner)
 		if prec > parentPrec or (allowEqual and prec == parentPrec) then
 			node = inner
 		else
@@ -213,13 +221,13 @@ local function stripBinaryOperand(node, parentPrec, allowEqual)
 	return node
 end
 
-local function stripUnaryOperand(node)
-	return stripBinaryOperand(node, UNARY_PRECEDENCE, false)
+local function StripUnaryOperand(node)
+	return StripBinaryOperand(node, UnaryPrecedence, false)
 end
 
-local minimumGlobalUses = 1
+local MinimumGlobalUses = 1
 
-local function isLocalizableRef(node): boolean
+local function IsLocalizableRef(node): boolean
 	if node.kind == "ExprGlobal" then
 		return true
 	elseif node.kind == "ExprIndexName" then
@@ -228,23 +236,23 @@ local function isLocalizableRef(node): boolean
 	return false
 end
 
-local function refKey(node): string
+local function RefKey(node): string
 	if node.kind == "ExprGlobal" then
 		return node.name
 	end
 	return node.expr.name .. "." .. node.index
 end
 
-local function baseOfKey(key: string): string
-	local dot = string.find(key, ".", 1, true)
+local function BaseOfKey(key: string): string
+	local dot = string_find(key, ".", 1, true)
 	if dot then
-		return key:sub(1, dot - 1)
+		return string_sub(key, 1, dot - 1)
 	end
 	return key
 end
 
-local function buildHoistStat(key: string)
-	local dot = string.find(key, ".", 1, true)
+local function BuildHoistStat(key: string)
+	local dot = string_find(key, ".", 1, true)
 	local loc = { begin = { x = 0, y = 0 }, end_ = { x = 0, y = 0 } }
 	local value
 	if dot then
@@ -254,9 +262,9 @@ local function buildHoistStat(key: string)
 			expr = {
 				kind = "ExprGlobal",
 				location = loc,
-				name = key:sub(1, dot - 1),
+				name = string_sub(key, 1, dot - 1),
 			},
-			index = key:sub(dot + 1),
+			index = string_sub(key, dot + 1),
 			indexLocation = loc,
 			opPosition = loc.begin,
 			op = 46,
@@ -288,14 +296,14 @@ local function buildHoistStat(key: string)
 	}
 end
 
-local function walkGlobalUses(node, context, counts, chosen, globals, mutated, mutatedBases, rewrite)
+local function WalkGlobalUses(node, context, counts, chosen, globals, mutated, mutatedBases, rewrite)
 	if type(node) ~= "table" or node.kind == nil then
 		return node
 	end
 
 	if rewrite then
-		if context == "value" and isLocalizableRef(node) and chosen[refKey(node)] then
-			local key = refKey(node)
+		if context == "value" and IsLocalizableRef(node) and chosen[RefKey(node)] then
+			local key = RefKey(node)
 			return {
 				kind = "ExprLocal",
 				location = node.location,
@@ -310,17 +318,17 @@ local function walkGlobalUses(node, context, counts, chosen, globals, mutated, m
 				upvalue = false,
 			}
 		end
-	elseif context == "value" and counts and isLocalizableRef(node) then
-		local key = refKey(node)
+	elseif context == "value" and counts and IsLocalizableRef(node) then
+		local key = RefKey(node)
 		counts[key] = (counts[key] or 0) + 1
-	elseif context == "target" and mutated and isLocalizableRef(node) then
+	elseif context == "target" and mutated and IsLocalizableRef(node) then
 		if node.kind == "ExprGlobal" then
 			mutated[node.name] = true
 			if mutatedBases then
 				mutatedBases[node.name] = true
 			end
 		else
-			mutated[refKey(node)] = true
+			mutated[RefKey(node)] = true
 		end
 	end
 
@@ -329,114 +337,114 @@ local function walkGlobalUses(node, context, counts, chosen, globals, mutated, m
 			globals[node.name] = true
 		end
 	elseif node.kind == "ExprIndexName" then
-		node.expr = walkGlobalUses(node.expr, "skip", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.expr = WalkGlobalUses(node.expr, "skip", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "ExprIndexExpr" then
-		node.expr = walkGlobalUses(node.expr, "skip", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.index = walkGlobalUses(node.index, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.expr = WalkGlobalUses(node.expr, "skip", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.index = WalkGlobalUses(node.index, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "ExprCall" then
 		if node.self then
-			node.func = walkGlobalUses(node.func, "skip", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.func = WalkGlobalUses(node.func, "skip", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		else
-			node.func = walkGlobalUses(node.func, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.func = WalkGlobalUses(node.func, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 		for i, arg in node.args do
-			node.args[i] = walkGlobalUses(arg, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.args[i] = WalkGlobalUses(arg, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 	elseif node.kind == "ExprFunction" then
 		if node.body then
-			node.body = walkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 	elseif node.kind == "ExprTable" then
 		for i, item in node.items do
 			if item.kind == "List" then
-				item.value = walkGlobalUses(item.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+				item.value = WalkGlobalUses(item.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 			elseif item.kind == "Record" then
-				item.value = walkGlobalUses(item.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+				item.value = WalkGlobalUses(item.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 			elseif item.kind == "General" then
 				if item.key then
-					item.key = walkGlobalUses(item.key, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+					item.key = WalkGlobalUses(item.key, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 				end
-				item.value = walkGlobalUses(item.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+				item.value = WalkGlobalUses(item.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 			end
 		end
 	elseif node.kind == "ExprUnary" then
-		node.expr = walkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "ExprBinary" then
-		node.left = walkGlobalUses(node.left, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.right = walkGlobalUses(node.right, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.left = WalkGlobalUses(node.left, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.right = WalkGlobalUses(node.right, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "ExprTypeAssertion" then
-		node.expr = walkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "ExprIfElse" then
-		node.condition = walkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.trueExpr = walkGlobalUses(node.trueExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.falseExpr = walkGlobalUses(node.falseExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.condition = WalkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.trueExpr = WalkGlobalUses(node.trueExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.falseExpr = WalkGlobalUses(node.falseExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "ExprInterpString" then
 		for i, expr in node.expressions do
-			node.expressions[i] = walkGlobalUses(expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.expressions[i] = WalkGlobalUses(expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 	elseif node.kind == "ExprGroup" then
-		node.expr = walkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "ExprInstantiate" then
-		node.expr = walkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "StatBlock" then
 		for i, stat in node.body do
-			node.body[i] = walkGlobalUses(stat, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.body[i] = WalkGlobalUses(stat, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 	elseif node.kind == "StatIf" then
-		node.condition = walkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.thenbody = walkGlobalUses(node.thenbody, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.condition = WalkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.thenbody = WalkGlobalUses(node.thenbody, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		if node.elsebody then
-			node.elsebody = walkGlobalUses(node.elsebody, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.elsebody = WalkGlobalUses(node.elsebody, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 	elseif node.kind == "StatWhile" then
-		node.condition = walkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.body = walkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.condition = WalkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "StatRepeat" then
-		node.body = walkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.condition = walkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.condition = WalkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "StatFor" then
-		node.from = walkGlobalUses(node.from, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.to = walkGlobalUses(node.to, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.from = WalkGlobalUses(node.from, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.to = WalkGlobalUses(node.to, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		if node.step then
-			node.step = walkGlobalUses(node.step, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.step = WalkGlobalUses(node.step, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
-		node.body = walkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "StatForIn" then
 		for i, value in node.values do
-			node.values[i] = walkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.values[i] = WalkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
-		node.body = walkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "StatLocal" then
 		for i, value in node.values do
-			node.values[i] = walkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.values[i] = WalkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 	elseif node.kind == "StatAssign" then
 		for i, target in node.vars do
-			node.vars[i] = walkGlobalUses(target, "target", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.vars[i] = WalkGlobalUses(target, "target", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 		for i, value in node.values do
-			node.values[i] = walkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.values[i] = WalkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 	elseif node.kind == "StatCompoundAssign" then
-		node.var = walkGlobalUses(node.var, "target", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.value = walkGlobalUses(node.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.var = WalkGlobalUses(node.var, "target", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.value = WalkGlobalUses(node.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "StatReturn" then
 		for i, value in node.list do
-			node.list[i] = walkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			node.list[i] = WalkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 		end
 	elseif node.kind == "StatExpr" then
-		node.expr = walkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "StatFunction" then
-		node.name = walkGlobalUses(node.name, "target", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.func = walkGlobalUses(node.func, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.name = WalkGlobalUses(node.name, "target", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.func = WalkGlobalUses(node.func, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	elseif node.kind == "StatLocalFunction" then
-		node.func = walkGlobalUses(node.func, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		node.func = WalkGlobalUses(node.func, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
 	end
 
 	return node
 end
 
-local function walkBooleanUses(node, counts, rewrite, trueName, falseName, returnsOnly, collect)
+local function WalkBooleanUses(node, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	if type(node) ~= "table" or node.kind == nil then
 		return node
 	end
@@ -470,113 +478,113 @@ local function walkBooleanUses(node, counts, rewrite, trueName, falseName, retur
 	end
 
 	if node.kind == "ExprIndexName" then
-		node.expr = walkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "ExprIndexExpr" then
-		node.expr = walkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.index = walkBooleanUses(node.index, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.index = WalkBooleanUses(node.index, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "ExprCall" then
-		node.func = walkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.func = WalkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		for i, arg in node.args do
-			node.args[i] = walkBooleanUses(arg, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.args[i] = WalkBooleanUses(arg, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
 	elseif node.kind == "ExprFunction" then
 		if node.body then
-			node.body = walkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
 	elseif node.kind == "ExprTable" then
 		for i, item in node.items do
 			if item.kind == "List" then
-				item.value = walkBooleanUses(item.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
+				item.value = WalkBooleanUses(item.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
 			elseif item.kind == "Record" then
-				item.value = walkBooleanUses(item.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
+				item.value = WalkBooleanUses(item.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
 			elseif item.kind == "General" then
 				if item.key then
-					item.key = walkBooleanUses(item.key, counts, rewrite, trueName, falseName, returnsOnly, collect)
+					item.key = WalkBooleanUses(item.key, counts, rewrite, trueName, falseName, returnsOnly, collect)
 				end
-				item.value = walkBooleanUses(item.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
+				item.value = WalkBooleanUses(item.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
 			end
 		end
 	elseif node.kind == "ExprUnary" then
-		node.expr = walkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "ExprBinary" then
-		node.left = walkBooleanUses(node.left, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.right = walkBooleanUses(node.right, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.left = WalkBooleanUses(node.left, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.right = WalkBooleanUses(node.right, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "ExprTypeAssertion" then
-		node.expr = walkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "ExprIfElse" then
-		node.condition = walkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.trueExpr = walkBooleanUses(node.trueExpr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.falseExpr = walkBooleanUses(node.falseExpr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.condition = WalkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.trueExpr = WalkBooleanUses(node.trueExpr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.falseExpr = WalkBooleanUses(node.falseExpr, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "ExprInterpString" then
 		for i, expr in node.expressions do
-			node.expressions[i] = walkBooleanUses(expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.expressions[i] = WalkBooleanUses(expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
 	elseif node.kind == "ExprGroup" then
-		node.expr = walkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "ExprInstantiate" then
-		node.expr = walkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "StatBlock" then
 		for i, stat in node.body do
-			node.body[i] = walkBooleanUses(stat, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.body[i] = WalkBooleanUses(stat, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
 	elseif node.kind == "StatIf" then
-		node.condition = walkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.thenbody = walkBooleanUses(node.thenbody, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.condition = WalkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.thenbody = WalkBooleanUses(node.thenbody, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		if node.elsebody then
-			node.elsebody = walkBooleanUses(node.elsebody, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.elsebody = WalkBooleanUses(node.elsebody, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
 	elseif node.kind == "StatWhile" then
-		node.condition = walkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.body = walkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.condition = WalkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "StatRepeat" then
-		node.body = walkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.condition = walkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.condition = WalkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "StatFor" then
-		node.from = walkBooleanUses(node.from, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.to = walkBooleanUses(node.to, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.from = WalkBooleanUses(node.from, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.to = WalkBooleanUses(node.to, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		if node.step then
-			node.step = walkBooleanUses(node.step, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.step = WalkBooleanUses(node.step, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
-		node.body = walkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "StatForIn" then
 		for i, value in node.values do
-			node.values[i] = walkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.values[i] = WalkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
-		node.body = walkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "StatLocal" then
 		for i, value in node.values do
-			node.values[i] = walkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.values[i] = WalkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
 	elseif node.kind == "StatAssign" then
 		for i, target in node.vars do
-			node.vars[i] = walkBooleanUses(target, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.vars[i] = WalkBooleanUses(target, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
 		for i, value in node.values do
-			node.values[i] = walkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, collect)
+			node.values[i] = WalkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, collect)
 		end
 	elseif node.kind == "StatCompoundAssign" then
-		node.var = walkBooleanUses(node.var, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.value = walkBooleanUses(node.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.var = WalkBooleanUses(node.var, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.value = WalkBooleanUses(node.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "StatReturn" then
 		for i, value in node.list do
-			node.list[i] = walkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, returnsOnly and true or collect)
+			node.list[i] = WalkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, returnsOnly and true or collect)
 		end
 	elseif node.kind == "StatExpr" then
-		node.expr = walkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "StatFunction" then
-		node.name = walkBooleanUses(node.name, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.func = walkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.name = WalkBooleanUses(node.name, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.func = WalkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "StatLocalFunction" then
-		node.func = walkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		node.func = WalkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	end
 
 	return node
 end
 
-local transformStatement: (typeof(node)) -> typeof(node)
-local transformStatementBlock: (typeof(node)) -> typeof(node)
+local TransformStatement: (typeof(node)) -> typeof(node)
+local TransformStatementBlock: (typeof(node)) -> typeof(node)
 
-local function transformExpression(node): typeof(node)
+local function TransformExpression(node): typeof(node)
 	if node == nil then
 		return nil
 	end
@@ -587,7 +595,7 @@ local function transformExpression(node): typeof(node)
 		return node
 
 	elseif node.kind == "ExprLocal" then
-		local newName = variableMap[node["local"].name] or node["local"].name
+		local newName = VariableMap[node["local"].name] or node["local"].name
 		return {
 			kind = "ExprLocal",
 			location = node.location,
@@ -609,16 +617,16 @@ local function transformExpression(node): typeof(node)
 		local newArgs = {}
 		local count = #node.args
 		for i, arg in node.args do
-			local t = transformExpression(arg)
+			local t = TransformExpression(arg)
 			if Transformer.Options.Rules.RemoveRedundantParens then
-				t = stripGroupList(t, i == count)
+				t = StripGroupList(t, i == count)
 			end
-			table.insert(newArgs, t)
+			table_insert(newArgs, t)
 		end
 		return {
 			kind = "ExprCall",
 			location = node.location,
-			func = stripPrefixGroups(transformExpressionPrefix(node.func), callablePrefixKinds),
+			func = StripPrefixGroups(TransformExpressionPrefix(node.func), CallablePrefixKinds),
 			args = newArgs,
 			self = node.self,
 		}
@@ -627,7 +635,7 @@ local function transformExpression(node): typeof(node)
 		return {
 			kind = "ExprIndexName",
 			location = node.location,
-			expr = stripPrefixGroups(transformExpressionPrefix(node.expr), callablePrefixKinds),
+			expr = StripPrefixGroups(TransformExpressionPrefix(node.expr), CallablePrefixKinds),
 			index = node.index,
 			indexLocation = node.indexLocation,
 			opPosition = node.opPosition,
@@ -638,22 +646,22 @@ local function transformExpression(node): typeof(node)
 		return {
 			kind = "ExprIndexExpr",
 			location = node.location,
-			expr = stripPrefixGroups(transformExpressionPrefix(node.expr), callablePrefixKinds),
-			index = stripAllGroups(transformExpression(node.index)),
+			expr = StripPrefixGroups(TransformExpressionPrefix(node.expr), CallablePrefixKinds),
+			index = StripAllGroups(TransformExpression(node.index)),
 		}
 
 	elseif node.kind == "ExprFunction" then
-		local savedMap = table.clone(variableMap)
-		local savedCounter = variableCounter
-		local savedNames = table.clone(usedNames)
+		local savedMap = table_clone(VariableMap)
+		local savedCounter = VariableCounter
+		local savedNames = table_clone(UsedNames)
 
 		local selfParam = nil
 		if node.self then
-			if not variableMap[node.self.name] then
-				variableMap[node.self.name] = generateName()
+			if not VariableMap[node.self.name] then
+				VariableMap[node.self.name] = GenerateName()
 			end
 			selfParam = {
-				name = variableMap[node.self.name],
+				name = VariableMap[node.self.name],
 				location = node.self.location,
 				functionDepth = node.self.functionDepth,
 				loopDepth = node.self.loopDepth,
@@ -664,11 +672,11 @@ local function transformExpression(node): typeof(node)
 
 		local newParams = {}
 		for _, param in node.args do
-			if not variableMap[param.name] then
-				variableMap[param.name] = generateName()
+			if not VariableMap[param.name] then
+				VariableMap[param.name] = GenerateName()
 			end
-			table.insert(newParams, {
-				name = variableMap[param.name],
+			table_insert(newParams, {
+				name = VariableMap[param.name],
 				location = param.location,
 				functionDepth = param.functionDepth,
 				loopDepth = param.loopDepth,
@@ -677,11 +685,11 @@ local function transformExpression(node): typeof(node)
 			})
 		end
 
-		local newBody = transformStatementBlock(node.body)
+		local newBody = TransformStatementBlock(node.body)
 
-		variableMap = savedMap
-		variableCounter = savedCounter
-		usedNames = savedNames
+		VariableMap = savedMap
+		VariableCounter = savedCounter
+		UsedNames = savedNames
 
 		return {
 			kind = "ExprFunction",
@@ -704,21 +712,21 @@ local function transformExpression(node): typeof(node)
 		local lastExpands = count > 0 and node.items[count].kind == "List"
 		for i, item in node.items do
 			if item.kind == "List" then
-				table.insert(newItems, {
+				table_insert(newItems, {
 					kind = "List",
-					value = stripGroupList(transformExpression(item.value), i == count and lastExpands),
+					value = StripGroupList(TransformExpression(item.value), i == count and lastExpands),
 				})
 			elseif item.kind == "Record" then
-				table.insert(newItems, {
+				table_insert(newItems, {
 					kind = "Record",
 					key = item.key,
-					value = stripAllGroups(transformExpression(item.value)),
+					value = StripAllGroups(TransformExpression(item.value)),
 				})
 			elseif item.kind == "General" then
-				table.insert(newItems, {
+				table_insert(newItems, {
 					kind = "General",
-					key = item.key and stripAllGroups(transformExpression(item.key)) or nil,
-					value = stripAllGroups(transformExpression(item.value)),
+					key = item.key and StripAllGroups(TransformExpression(item.key)) or nil,
+					value = StripAllGroups(TransformExpression(item.value)),
 				})
 			end
 		end
@@ -733,23 +741,23 @@ local function transformExpression(node): typeof(node)
 			kind = "ExprUnary",
 			location = node.location,
 			op = node.op,
-			expr = stripUnaryOperand(transformExpression(node.expr)),
+			expr = StripUnaryOperand(TransformExpression(node.expr)),
 		}
 
 	elseif node.kind == "ExprBinary" then
-		local left = transformExpression(node.left)
-		local right = transformExpression(node.right)
+		local left = TransformExpression(node.left)
+		local right = TransformExpression(node.right)
 
 		if Transformer.Options.Rules.RemoveRedundantParens then
-			left = stripBinaryOperand(left, binaryPrecedence[node.op], not rightAssociative[node.op])
-			right = stripBinaryOperand(right, binaryPrecedence[node.op], rightAssociative[node.op])
+			left = StripBinaryOperand(left, BinaryPrecedence[node.op], not RightAssociative[node.op])
+			right = StripBinaryOperand(right, BinaryPrecedence[node.op], RightAssociative[node.op])
 		end
 
 		if Transformer.Options.Rules.ConstantFold then
 			if left.kind == "ExprConstantNumber" and right.kind == "ExprConstantNumber" then
-				local opName = opToString[node.op]
+				local opName = OpToString[node.op]
 				if opName then
-					local result = foldConstantBinary(left.value, opName, right.value)
+					local result = FoldConstantBinary(left.value, opName, right.value)
 					if result then
 						return {
 							kind = "ExprConstantNumber",
@@ -774,9 +782,9 @@ local function transformExpression(node): typeof(node)
 		return {
 			kind = "ExprIfElse",
 			location = node.location,
-			condition = stripAllGroups(transformExpression(node.condition)),
-			trueExpr = stripAllGroups(transformExpression(node.trueExpr)),
-			falseExpr = stripAllGroups(transformExpression(node.falseExpr)),
+			condition = StripAllGroups(TransformExpression(node.condition)),
+			trueExpr = StripAllGroups(TransformExpression(node.trueExpr)),
+			falseExpr = StripAllGroups(TransformExpression(node.falseExpr)),
 			hasThen = node.hasThen,
 			hasElse = node.hasElse,
 		}
@@ -784,7 +792,7 @@ local function transformExpression(node): typeof(node)
 	elseif node.kind == "ExprInterpString" then
 		local newExprs = {}
 		for _, expr in node.expressions do
-			table.insert(newExprs, stripAllGroups(transformExpression(expr)))
+			table_insert(newExprs, StripAllGroups(TransformExpression(expr)))
 		end
 		return {
 			kind = "ExprInterpString",
@@ -797,13 +805,13 @@ local function transformExpression(node): typeof(node)
 		return {
 			kind = "ExprTypeAssertion",
 			location = node.location,
-			expr = stripAllGroups(transformExpression(node.expr)),
+			expr = StripAllGroups(TransformExpression(node.expr)),
 			annotation = node.annotation,
 		}
 
 	elseif node.kind == "ExprGroup" then
-		local inner = transformExpression(node.expr)
-		if Transformer.Options.Rules.RemoveRedundantParens and alwaysSafeKinds[inner.kind] then
+		local inner = TransformExpression(node.expr)
+		if Transformer.Options.Rules.RemoveRedundantParens and AlwaysSafeKinds[inner.kind] then
 			return inner
 		end
 		return {
@@ -816,26 +824,26 @@ local function transformExpression(node): typeof(node)
 		return {
 			kind = "ExprInstantiate",
 			location = node.location,
-			expr = transformExpression(node.expr),
+			expr = TransformExpression(node.expr),
 		}
 	end
 
 	return node
 end
 
-transformExpressionPrefix = function(node)
+TransformExpressionPrefix = function(node)
 	if node.kind == "ExprGroup" then
-		local inner = transformExpression(node.expr)
+		local inner = TransformExpression(node.expr)
 		return {
 			kind = "ExprGroup",
 			location = node.location,
 			expr = inner,
 		}
 	end
-	return transformExpression(node)
+	return TransformExpression(node)
 end
 
-local function isSafeBoolCondition(expr): boolean
+local function IsSafeBoolCondition(expr): boolean
 	if expr == nil then
 		return false
 	elseif expr.kind == "ExprConstantBool" then
@@ -843,15 +851,15 @@ local function isSafeBoolCondition(expr): boolean
 	elseif expr.kind == "ExprUnary" then
 		return expr.op == 0
 	elseif expr.kind == "ExprGroup" then
-		return isSafeBoolCondition(expr.expr)
+		return IsSafeBoolCondition(expr.expr)
 	elseif expr.kind == "ExprBinary" then
 		return expr.op >= 8 and expr.op <= 13
 	end
 	return false
 end
 
-local function negateExpr(expr, location)
-	if exprPrecedence(expr) <= UNARY_PRECEDENCE then
+local function NegateExpr(expr, location)
+	if ExprPrecedence(expr) <= UnaryPrecedence then
 		return {
 			kind = "ExprUnary",
 			location = location,
@@ -871,7 +879,7 @@ local function negateExpr(expr, location)
 	}
 end
 
-local function boolReturnValue(stat): boolean?
+local function BoolReturnValue(stat): boolean?
 	if stat.kind ~= "StatReturn" or #stat.list ~= 1 then
 		return nil
 	end
@@ -882,10 +890,10 @@ local function boolReturnValue(stat): boolean?
 	return value.value
 end
 
-local function makeBoolReturn(condition, thenIsTrue, location)
+local function MakeBoolReturn(condition, thenIsTrue, location)
 	local value = condition
 	if not thenIsTrue then
-		value = negateExpr(condition, location)
+		value = NegateExpr(condition, location)
 	end
 	return {
 		kind = "StatReturn",
@@ -894,11 +902,11 @@ local function makeBoolReturn(condition, thenIsTrue, location)
 	}
 end
 
-local function collapseIfElse(stat)
+local function CollapseIfElse(stat)
 	if stat.kind ~= "StatIf" or stat.elsebody == nil then
 		return nil
 	end
-	if not isSafeBoolCondition(stat.condition) then
+	if not IsSafeBoolCondition(stat.condition) then
 		return nil
 	end
 	local thenbody = stat.thenbody
@@ -909,19 +917,19 @@ local function collapseIfElse(stat)
 	if elsebody.kind ~= "StatBlock" or #elsebody.body ~= 1 then
 		return nil
 	end
-	local thenValue = boolReturnValue(thenbody.body[1])
-	local elseValue = boolReturnValue(elsebody.body[1])
+	local thenValue = BoolReturnValue(thenbody.body[1])
+	local elseValue = BoolReturnValue(elsebody.body[1])
 	if thenValue == nil or elseValue == nil or thenValue == elseValue then
 		return nil
 	end
-	return makeBoolReturn(stat.condition, thenValue, stat.location)
+	return MakeBoolReturn(stat.condition, thenValue, stat.location)
 end
 
-local function collapseTailReturn(stat, nextStat)
+local function CollapseTailReturn(stat, nextStat)
 	if stat.kind ~= "StatIf" or stat.elsebody ~= nil then
 		return nil
 	end
-	if not isSafeBoolCondition(stat.condition) then
+	if not IsSafeBoolCondition(stat.condition) then
 		return nil
 	end
 	if nextStat == nil then
@@ -931,67 +939,67 @@ local function collapseTailReturn(stat, nextStat)
 	if thenbody.kind ~= "StatBlock" or #thenbody.body ~= 1 then
 		return nil
 	end
-	local thenValue = boolReturnValue(thenbody.body[1])
-	local nextValue = boolReturnValue(nextStat)
+	local thenValue = BoolReturnValue(thenbody.body[1])
+	local nextValue = BoolReturnValue(nextStat)
 	if thenValue == nil or nextValue == nil or nextValue == thenValue then
 		return nil
 	end
-	return makeBoolReturn(stat.condition, thenValue, stat.location)
+	return MakeBoolReturn(stat.condition, thenValue, stat.location)
 end
 
-local collapseBoolReturnsInStat
+local CollapseBoolReturnsInStat
 
-local function collapseBoolReturnsInBlock(body)
+local function CollapseBoolReturnsInBlock(body)
 	for _, stat in body do
-		collapseBoolReturnsInStat(stat)
+		CollapseBoolReturnsInStat(stat)
 	end
 	local result = {}
 	local i = 1
 	while i <= #body do
 		local stat = body[i]
-		local collapsed = collapseIfElse(stat)
+		local collapsed = CollapseIfElse(stat)
 		if collapsed then
-			table.insert(result, collapsed)
+			table_insert(result, collapsed)
 			i += 1
 			continue
 		end
-		collapsed = collapseTailReturn(stat, body[i + 1])
+		collapsed = CollapseTailReturn(stat, body[i + 1])
 		if collapsed then
-			table.insert(result, collapsed)
+			table_insert(result, collapsed)
 			i += 2
 			continue
 		end
-		table.insert(result, stat)
+		table_insert(result, stat)
 		i += 1
 	end
 	return result
 end
 
-collapseBoolReturnsInStat = function(stat)
+CollapseBoolReturnsInStat = function(stat)
 	if stat.kind == "StatIf" then
-		stat.thenbody.body = collapseBoolReturnsInBlock(stat.thenbody.body)
+		stat.thenbody.body = CollapseBoolReturnsInBlock(stat.thenbody.body)
 		if stat.elsebody then
 			if stat.elsebody.kind == "StatIf" then
-				collapseBoolReturnsInStat(stat.elsebody)
+				CollapseBoolReturnsInStat(stat.elsebody)
 			else
-				stat.elsebody.body = collapseBoolReturnsInBlock(stat.elsebody.body)
+				stat.elsebody.body = CollapseBoolReturnsInBlock(stat.elsebody.body)
 			end
 		end
 	elseif stat.kind == "StatBlock" then
-		stat.body = collapseBoolReturnsInBlock(stat.body)
+		stat.body = CollapseBoolReturnsInBlock(stat.body)
 	elseif stat.kind == "StatFunction" or stat.kind == "StatLocalFunction" then
-		stat.func.body.body = collapseBoolReturnsInBlock(stat.func.body.body)
+		stat.func.body.body = CollapseBoolReturnsInBlock(stat.func.body.body)
 	elseif stat.kind == "StatWhile" or stat.kind == "StatRepeat"
 		or stat.kind == "StatFor" or stat.kind == "StatForIn" then
-		stat.body.body = collapseBoolReturnsInBlock(stat.body.body)
+		stat.body.body = CollapseBoolReturnsInBlock(stat.body.body)
 	end
 	return stat
 end
 
-transformStatementBlock = function(node): typeof(node)
+TransformStatementBlock = function(node): typeof(node)
 	local newStats = {}
 	for _, stat in node.body do
-		table.insert(newStats, transformStatement(stat))
+		table_insert(newStats, TransformStatement(stat))
 	end
 	return {
 		kind = "StatBlock",
@@ -1001,28 +1009,28 @@ transformStatementBlock = function(node): typeof(node)
 	}
 end
 
-transformStatement = function(node): typeof(node)
+TransformStatement = function(node): typeof(node)
 	if node.kind == "StatBlock" then
-		return transformStatementBlock(node)
+		return TransformStatementBlock(node)
 
 	elseif node.kind == "StatLocal" then
 		local newValues = {}
 		local count = #node.values
 		for i, value in node.values do
-			local t = transformExpression(value)
+			local t = TransformExpression(value)
 			if Transformer.Options.Rules.RemoveRedundantParens then
-				t = stripGroupList(t, i == count)
+				t = StripGroupList(t, i == count)
 			end
-			table.insert(newValues, t)
+			table_insert(newValues, t)
 		end
 
 		local newNames = {}
 		for _, name in node.vars do
-			if not variableMap[name.name] then
-				variableMap[name.name] = generateName()
+			if not VariableMap[name.name] then
+				VariableMap[name.name] = GenerateName()
 			end
-			table.insert(newNames, {
-				name = variableMap[name.name],
+			table_insert(newNames, {
+				name = VariableMap[name.name],
 				location = name.location,
 				functionDepth = name.functionDepth,
 				loopDepth = name.loopDepth,
@@ -1042,19 +1050,19 @@ transformStatement = function(node): typeof(node)
 		}
 
 	elseif node.kind == "StatIf" then
-		local newThenBody = transformStatementBlock(node.thenbody)
+		local newThenBody = TransformStatementBlock(node.thenbody)
 		local newElseBody = nil
 		if node.elsebody then
 			if node.elsebody.kind == "StatIf" then
-				newElseBody = transformStatement(node.elsebody)
+				newElseBody = TransformStatement(node.elsebody)
 			else
-				newElseBody = transformStatementBlock(node.elsebody)
+				newElseBody = TransformStatementBlock(node.elsebody)
 			end
 		end
 		return {
 			kind = "StatIf",
 			location = node.location,
-			condition = stripAllGroups(transformExpression(node.condition)),
+			condition = StripAllGroups(TransformExpression(node.condition)),
 			thenbody = newThenBody,
 			elsebody = newElseBody,
 		}
@@ -1063,47 +1071,47 @@ transformStatement = function(node): typeof(node)
 		return {
 			kind = "StatWhile",
 			location = node.location,
-			condition = stripAllGroups(transformExpression(node.condition)),
-			body = transformStatementBlock(node.body),
+			condition = StripAllGroups(TransformExpression(node.condition)),
+			body = TransformStatementBlock(node.body),
 		}
 
 	elseif node.kind == "StatRepeat" then
 		return {
 			kind = "StatRepeat",
 			location = node.location,
-			body = transformStatementBlock(node.body),
-			condition = stripAllGroups(transformExpression(node.condition)),
+			body = TransformStatementBlock(node.body),
+			condition = StripAllGroups(TransformExpression(node.condition)),
 		}
 
 	elseif node.kind == "StatFor" then
-		if not variableMap[node.var.name] then
-			variableMap[node.var.name] = generateName()
+		if not VariableMap[node.var.name] then
+			VariableMap[node.var.name] = GenerateName()
 		end
 		return {
 			kind = "StatFor",
 			location = node.location,
 			var = {
-				name = variableMap[node.var.name],
+				name = VariableMap[node.var.name],
 				location = node.var.location,
 				functionDepth = node.var.functionDepth,
 				loopDepth = node.var.loopDepth,
 				isConst = node.var.isConst,
 				isExported = node.var.isExported,
 			},
-			from = stripAllGroups(transformExpression(node.from)),
-			to = stripAllGroups(transformExpression(node.to)),
-			step = node.step and stripAllGroups(transformExpression(node.step)) or nil,
-			body = transformStatementBlock(node.body),
+			from = StripAllGroups(TransformExpression(node.from)),
+			to = StripAllGroups(TransformExpression(node.to)),
+			step = node.step and StripAllGroups(TransformExpression(node.step)) or nil,
+			body = TransformStatementBlock(node.body),
 		}
 
 	elseif node.kind == "StatForIn" then
 		local newNames = {}
 		for _, name in node.vars do
-			if not variableMap[name.name] then
-				variableMap[name.name] = generateName()
+			if not VariableMap[name.name] then
+				VariableMap[name.name] = GenerateName()
 			end
-			table.insert(newNames, {
-				name = variableMap[name.name],
+			table_insert(newNames, {
+				name = VariableMap[name.name],
 				location = name.location,
 				functionDepth = name.functionDepth,
 				loopDepth = name.loopDepth,
@@ -1115,11 +1123,11 @@ transformStatement = function(node): typeof(node)
 		local newValues = {}
 		local count = #node.values
 		for i, value in node.values do
-			local t = transformExpression(value)
+			local t = TransformExpression(value)
 			if Transformer.Options.Rules.RemoveRedundantParens then
-				t = stripGroupList(t, i == count)
+				t = StripGroupList(t, i == count)
 			end
-			table.insert(newValues, t)
+			table_insert(newValues, t)
 		end
 
 		return {
@@ -1127,22 +1135,22 @@ transformStatement = function(node): typeof(node)
 			location = node.location,
 			vars = newNames,
 			values = newValues,
-			body = transformStatementBlock(node.body),
+			body = TransformStatementBlock(node.body),
 		}
 
 	elseif node.kind == "StatAssign" then
 		local newTargets = {}
 		for _, target in node.vars do
-			table.insert(newTargets, transformExpression(target))
+			table_insert(newTargets, TransformExpression(target))
 		end
 		local newValues = {}
 		local count = #node.values
 		for i, value in node.values do
-			local t = transformExpression(value)
+			local t = TransformExpression(value)
 			if Transformer.Options.Rules.RemoveRedundantParens then
-				t = stripGroupList(t, i == count)
+				t = StripGroupList(t, i == count)
 			end
-			table.insert(newValues, t)
+			table_insert(newValues, t)
 		end
 		return {
 			kind = "StatAssign",
@@ -1156,19 +1164,19 @@ transformStatement = function(node): typeof(node)
 			kind = "StatCompoundAssign",
 			location = node.location,
 			op = node.op,
-			var = transformExpression(node.var),
-			value = stripAllGroups(transformExpression(node.value)),
+			var = TransformExpression(node.var),
+			value = StripAllGroups(TransformExpression(node.value)),
 		}
 
 	elseif node.kind == "StatReturn" then
 		local newValues = {}
 		local count = #node.list
 		for i, value in node.list do
-			local t = transformExpression(value)
+			local t = TransformExpression(value)
 			if Transformer.Options.Rules.RemoveRedundantParens then
-				t = stripGroupList(t, i == count)
+				t = StripGroupList(t, i == count)
 			end
-			table.insert(newValues, t)
+			table_insert(newValues, t)
 		end
 		return {
 			kind = "StatReturn",
@@ -1180,34 +1188,34 @@ transformStatement = function(node): typeof(node)
 		return {
 			kind = "StatExpr",
 			location = node.location,
-			expr = stripAllGroups(transformExpression(node.expr)),
+			expr = StripAllGroups(TransformExpression(node.expr)),
 		}
 
 	elseif node.kind == "StatFunction" then
 		return {
 			kind = "StatFunction",
 			location = node.location,
-			name = transformExpression(node.name),
-			func = transformExpression(node.func),
+			name = TransformExpression(node.name),
+			func = TransformExpression(node.func),
 			attributes = node.attributes,
 		}
 
 	elseif node.kind == "StatLocalFunction" then
-		if not variableMap[node.name.name] then
-			variableMap[node.name.name] = generateName()
+		if not VariableMap[node.name.name] then
+			VariableMap[node.name.name] = GenerateName()
 		end
 		return {
 			kind = "StatLocalFunction",
 			location = node.location,
 			name = {
-				name = variableMap[node.name.name],
+				name = VariableMap[node.name.name],
 				location = node.name.location,
 				functionDepth = node.name.functionDepth,
 				loopDepth = node.name.loopDepth,
 				isConst = node.name.isConst,
 				isExported = node.name.isExported,
 			},
-			func = transformExpression(node.func),
+			func = TransformExpression(node.func),
 			isConst = node.isConst,
 		}
 
@@ -1225,9 +1233,9 @@ transformStatement = function(node): typeof(node)
 end
 
 function Transformer.Transform(ast)
-	variableMap = {}
-	variableCounter = 0
-	usedNames = {}
+	VariableMap = {}
+	VariableCounter = 0
+	UsedNames = {}
 
 	if Transformer.Options.Rules.LocalizeGlobals then
 		local counts = {}
@@ -1235,45 +1243,45 @@ function Transformer.Transform(ast)
 		local mutated = {}
 		local mutatedBases = {}
 
-		walkGlobalUses(ast, "value", counts, nil, globals, mutated, mutatedBases, false)
+		WalkGlobalUses(ast, "value", counts, nil, globals, mutated, mutatedBases, false)
 
 		local chosen = {}
 		for key, count in pairs(counts) do
-			if count >= minimumGlobalUses
+			if count >= MinimumGlobalUses
 				and not mutated[key]
-				and not mutatedBases[baseOfKey(key)] then
+				and not mutatedBases[BaseOfKey(key)] then
 				chosen[key] = true
 			end
 		end
 
 		if next(chosen) ~= nil then
-			walkGlobalUses(ast, "value", counts, chosen, globals, mutated, mutatedBases, true)
+			WalkGlobalUses(ast, "value", counts, chosen, globals, mutated, mutatedBases, true)
 
 			local hoists = {}
 			for key in pairs(chosen) do
-				table.insert(hoists, buildHoistStat(key))
+				table_insert(hoists, BuildHoistStat(key))
 			end
-			table.sort(hoists, function(a, b)
+			table_sort(hoists, function(a, b)
 				return a.vars[1].name < b.vars[1].name
 			end)
 
 			for i, stat in hoists do
-				table.insert(ast.body, i, stat)
+				table_insert(ast.body, i, stat)
 			end
 		end
 
 		for name in pairs(globals) do
-			usedNames[name] = true
+			UsedNames[name] = true
 		end
 	end
 
 	if Transformer.Options.Rules.ConstantFold then
-		ast.body = collapseBoolReturnsInBlock(ast.body)
+		ast.body = CollapseBoolReturnsInBlock(ast.body)
 	end
 
-	local function localizeBools(ast, returnsOnly)
+	local function LocalizeBools(ast, returnsOnly)
 		local counts = { ["true"] = 0, ["false"] = 0 }
-		walkBooleanUses(ast, counts, false, nil, nil, returnsOnly)
+		WalkBooleanUses(ast, counts, false, nil, nil, returnsOnly)
 
 		local trueCount = counts["true"]
 		local falseCount = counts["false"]
@@ -1290,19 +1298,19 @@ function Transformer.Transform(ast)
 			local trueName = "luaia_bool_true"
 			local falseName = "luaia_bool_false"
 			if trueCount > 0 then
-				variableMap[trueName] = generateName()
+				VariableMap[trueName] = GenerateName()
 			end
 			if falseCount > 0 then
-				variableMap[falseName] = generateName()
+				VariableMap[falseName] = GenerateName()
 			end
 
-			walkBooleanUses(ast, counts, true, trueName, falseName, returnsOnly)
+			WalkBooleanUses(ast, counts, true, trueName, falseName, returnsOnly)
 
 			local loc = { begin = { x = 0, y = 0 }, end_ = { x = 0, y = 0 } }
 			local vars = {}
 			local values = {}
 			if trueCount > 0 then
-				table.insert(vars, {
+				table_insert(vars, {
 					name = trueName,
 					location = loc,
 					functionDepth = 0,
@@ -1310,10 +1318,10 @@ function Transformer.Transform(ast)
 					isConst = false,
 					isExported = false,
 				})
-				table.insert(values, { kind = "ExprConstantBool", location = loc, value = true })
+				table_insert(values, { kind = "ExprConstantBool", location = loc, value = true })
 			end
 			if falseCount > 0 then
-				table.insert(vars, {
+				table_insert(vars, {
 					name = falseName,
 					location = loc,
 					functionDepth = 0,
@@ -1321,9 +1329,9 @@ function Transformer.Transform(ast)
 					isConst = false,
 					isExported = false,
 				})
-				table.insert(values, { kind = "ExprConstantBool", location = loc, value = false })
+				table_insert(values, { kind = "ExprConstantBool", location = loc, value = false })
 			end
-			table.insert(ast.body, 1, {
+			table_insert(ast.body, 1, {
 				kind = "StatLocal",
 				location = loc,
 				vars = vars,
@@ -1336,12 +1344,12 @@ function Transformer.Transform(ast)
 	end
 
 	if Transformer.Options.Rules.LocalizeBooleans then
-		localizeBools(ast, false)
+		LocalizeBools(ast, false)
 	else
-		localizeBools(ast, true)
+		LocalizeBools(ast, true)
 	end
 
-	ast = transformStatementBlock(ast)
+	ast = TransformStatementBlock(ast)
 
 	return ast
 end
