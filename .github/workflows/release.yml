@@ -35,6 +35,7 @@ jobs:
             -o lune.zip
           unzip -o lune.zip -d "$HOME/.lune-bin"
           echo "$HOME/.lune-bin" >> "$GITHUB_PATH"
+          lune --version
 
       - name: Build & package binaries
         shell: bash
@@ -60,6 +61,8 @@ jobs:
               *)         bin="luaia" ;;
             esac
 
+            # lune build fails if the output directory does not exist yet
+            mkdir -p "release/$target"
             lune build bin/cli.lua --target "$target" -o "release/$target/$bin"
 
             (cd "release/$target" && zip -q "../luaia-${VERSION}-${target}.zip" "$bin")
