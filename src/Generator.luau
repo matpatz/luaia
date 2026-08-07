@@ -100,7 +100,7 @@ local function GenerateExpression(node): string
 		local op = opMap[node.op] or " "
 		return GenerateExpression(node.left) .. op .. GenerateExpression(node.right)
 	elseif node.kind == "ExprTypeAssertion" then
-		return GenerateExpression(node.expr) .. "::" .. GenerateType(node.type)
+		return GenerateExpression(node.expr)
 	elseif node.kind == "ExprIfElse" then
 		local cond = GenerateExpression(node.condition)
 		local thenExpr = GenerateExpression(node.trueExpr)
@@ -127,39 +127,8 @@ local function GenerateExpression(node): string
 	elseif node.kind == "ExprGroup" then
 		return "(" .. GenerateExpression(node.expr) .. ")"
 	elseif node.kind == "ExprInstantiate" then
-		return GenerateExpression(node.expr) .. "<" .. ">"
+		return GenerateExpression(node.expr)
 	elseif node.kind == "ExprError" then
-		return "<error>"
-	end
-
-	return "<unknown>"
-end
-
-local function GenerateType(node): string
-	if node.kind == "TypeReference" then
-		if node.package then
-			return node.package .. "." .. node.name
-		end
-		return node.name
-	elseif node.kind == "TypeTable" then
-		return "{}"
-	elseif node.kind == "TypeFunction" then
-		return "function"
-	elseif node.kind == "TypeTypeof" then
-		return "typeof(" .. GenerateExpression(node.expr) .. ")"
-	elseif node.kind == "TypeUnion" then
-		return GenerateType(node.left) .. "|" .. GenerateType(node.right)
-	elseif node.kind == "TypeIntersection" then
-		return GenerateType(node.left) .. "&" .. GenerateType(node.right)
-	elseif node.kind == "TypeSingletonBool" then
-		return if node.value then "true" else "false"
-	elseif node.kind == "TypeSingletonString" then
-		return '"' .. node.value .. '"'
-	elseif node.kind == "TypeOptional" then
-		return "?"
-	elseif node.kind == "TypeGroup" then
-		return "(" .. GenerateType(node.type) .. ")"
-	elseif node.kind == "TypeError" then
 		return "<error>"
 	end
 
@@ -276,17 +245,17 @@ local function GenerateStat(node): string
 		local func = GenerateExpression(node.func)
 		return "local function " .. node.name.name .. func:sub(9)
 	elseif node.kind == "StatTypeAlias" then
-		return "type " .. node.name.value .. "=" .. GenerateType(node.type)
+		return ""
 	elseif node.kind == "StatTypeFunction" then
-		return "type " .. node.name.value .. "=" .. GenerateType(node.type)
+		return ""
 	elseif node.kind == "StatDeclareGlobal" then
-		return "declare " .. node.name.value .. ":" .. GenerateType(node.type)
+		return ""
 	elseif node.kind == "StatDeclareFunction" then
-		return "declare function " .. node.name.value .. "()"
+		return ""
 	elseif node.kind == "StatDeclareExternType" then
-		return "declare " .. node.name.value
+		return ""
 	elseif node.kind == "StatClass" then
-		return "type " .. node.name.value .. "=" .. "{}"
+		return ""
 	elseif node.kind == "StatError" then
 		return "<error>"
 	end
@@ -299,7 +268,11 @@ function GenerateBlock(node): string
 	output = {}
 
 	for _, stat in node.body do
-		Emit(GenerateStat(stat))
+		local s = GenerateStat(stat)
+		if s == "" then
+			continue
+		end
+		Emit(s)
 		local last = output[#output]
 		if not string.match(last, ";$") then
 			Emit(";")

@@ -119,6 +119,68 @@ test.suite("luaia", function()
 			check.equal(result, nil)
 			check.not_nil(errors)
 		end)
+
+		test.case("should collapse boolean returns", function()
+			local result, errors = luaia.Minify("local function f(a, b) if a == b then return true else return false end end")
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "return [a-z]+==[a-z]+", 1))
+		end)
+
+		test.case("should collapse tail boolean returns", function()
+			local result, errors = luaia.Minify("local function f(n) if n == 2 then return true end return false end")
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "return [a-z]+==2", 1))
+		end)
+
+		test.case("should keep non-boolean conditions in boolean returns", function()
+			local result, errors = luaia.Minify("local function f(x) if x then return true else return false end end")
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "if [a-z]+ then return true", 1))
+		end)
+
+		test.case("should localize return booleans under no-bools", function()
+			local source = [[
+local function f(list, value)
+	for _, v in ipairs(list) do
+		if v == value then return true end
+	end
+	return false
+end
+local function g(list, value)
+	for _, v in ipairs(list) do
+		if v > value then return true end
+	end
+	return false
+end
+local function h(list, value)
+	for _, v in ipairs(list) do
+		if v < value then return true end
+	end
+	return false
+end
+local function i(list, value)
+	for _, v in ipairs(list) do
+		if v ~= value then return true end
+	end
+	return false
+end
+local function j(list, value)
+	for _, v in ipairs(list) do
+		if v >= value then return true end
+	end
+	return false
+end
+]]
+			local result, errors = luaia.Minify(source, { Rules = { LocalizeBooleans = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "local [a-z],[a-z]=true,false", 1))
+			check.equal(string.find(result, "return true", 1), nil)
+			check.equal(string.find(result, "return false", 1), nil)
+		end)
 	end)
 
 	test.suite("edge cases", function()
