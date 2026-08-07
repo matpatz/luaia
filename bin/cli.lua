@@ -21,6 +21,7 @@ if #args == 0 then
 	print("  --no-fold    Disable constant folding")
 	print("  --no-rename  Disable variable renaming")
 	print("  --no-localize  Disable global function localization")
+	print("  --no-bools     Disable boolean literal localization")
 	print("  --version    Show version")
 	print("  --help       Show this help message")
 	process.exit(1)
@@ -34,6 +35,7 @@ local fromStdin = false
 local constantFold = true
 local renameVars = true
 local localizeGlobals = true
+local localizeBools = true
 
 local i = 1
 while i <= #args do
@@ -57,6 +59,7 @@ while i <= #args do
 		print("  --no-fold    Disable constant folding")
 		print("  --no-rename  Disable variable renaming")
 		print("  --no-localize  Disable global function localization")
+		print("  --no-bools     Disable boolean literal localization")
 		print("  --version    Show version")
 		print("  --help       Show this help message")
 		process.exit(0)
@@ -75,6 +78,8 @@ while i <= #args do
 		renameVars = false
 	elseif arg == "--no-localize" then
 		localizeGlobals = false
+	elseif arg == "--no-bools" then
+		localizeBools = false
 	elseif arg:sub(1, 1) ~= "-" then
 		inputFile = arg
 	end
@@ -101,6 +106,7 @@ local result, errors = luaia.Minify(source, {
 		MinifyVariables = renameVars,
 		ConstantFold = constantFold,
 		LocalizeGlobals = localizeGlobals,
+		LocalizeBooleans = localizeBools,
 	},
 })
 local elapsedMs = (os.clock() - startTime) * 1000

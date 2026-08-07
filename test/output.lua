@@ -1,1 +1,1 @@
-local a=print;local b=(function() return function(b) return function(c) return function(d) local e={};e[1]=b;e[2]=c;e[3]=d;local f=1;local g=0;while true do if not e[f] then break;end;g=g+e[f];f+=1;if false then continue;end;end;return g;end;end;end;end)()(5)(10)(15);a(b);
+local a=print;local b=true;a(`the value of a is ${b}`);b=false;a("the value of a is",b);

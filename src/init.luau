@@ -8,7 +8,7 @@ luaia.Parser = Parser
 luaia.Transformer = Transformer
 luaia.Generator = Generator
 
-function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boolean?, ConstantFold: boolean?, RemoveRedundantParens: boolean?, LocalizeGlobals: boolean? }? }?): (string?, { string }?)
+function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boolean?, ConstantFold: boolean?, RemoveRedundantParens: boolean?, LocalizeGlobals: boolean?, LocalizeBooleans: boolean? }? }?): (string?, { string }?)
 	if Options then
 		if Options.Rules then
 			if Options.Rules.MinifyVariables ~= nil then
@@ -22,6 +22,9 @@ function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boole
 			end
 			if Options.Rules.LocalizeGlobals ~= nil then
 				Transformer.Options.Rules.LocalizeGlobals = Options.Rules.LocalizeGlobals
+			end
+			if Options.Rules.LocalizeBooleans ~= nil then
+				Transformer.Options.Rules.LocalizeBooleans = Options.Rules.LocalizeBooleans
 			end
 		end
 	end

@@ -40,6 +40,7 @@ lune run bin/cli.lua --stdin                 Read from stdin
 | `--no-fold` | Disable constant folding |
 | `--no-rename` | Disable variable renaming |
 | `--no-localize` | Disable global function localization |
+| `--no-bools` | Disable boolean literal localization |
 | `--version` | Show version |
 | `--help` | Show help |
 
@@ -69,6 +70,7 @@ local result, errors = luaia.Minify(source, {
         MinifyVariables = true,  -- rename local variables (default: true)
         ConstantFold = true,     -- fold constants (default: true)
         LocalizeGlobals = true,  -- hoist global functions into locals (default: true)
+        LocalizeBooleans = true, -- hoist true/false literals into locals (default: true)
     },
 })
 
@@ -91,6 +93,7 @@ Rules are individually toggleable optimizations. Enable them all by default; pas
 | `ConstantFold` | `--no-fold` | Fold constant expressions |
 | `RemoveRedundantParens` | | Remove redundant parentheses |
 | `LocalizeGlobals` | `--no-localize` | Hoist global function references into local variables |
+| `LocalizeBooleans` | `--no-bools` | Replace repeated `true`/`false` literals with aliased locals |
 
 ### LocalizeGlobals
 
@@ -107,6 +110,18 @@ local a=print;local b=math.floor;local c=string.upper;a(b(3.7));a(b(5.2));a(c("h
 ```
 
 A global is left inline if it is ever reassigned in the file (e.g. `math.floor = ...` or `function math.floor() ... end`), so the alias never captures a stale value.
+
+### LocalizeBooleans
+
+Replaces repeated `true`/`false` literals with aliases declared once at the top of the file. Only applied when the number of occurrences outweighs the cost of the declaration, so scripts with just a couple of literals are left untouched.
+
+```lua
+-- Input
+local flags = { true, false, true, false, true, false, true, false }
+
+-- Output (abbreviated)
+local a,b=true,false;local flags={a,b,a,b,a,b,a,b};
+```
 
 ## Before/After
 

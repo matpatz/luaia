@@ -1,3 +1,5 @@
+-- new rule
+
 local a,b = true, false
 
 if a then
@@ -7,3 +9,45 @@ if b then
     local c = math.random(1, 2) == 1 and a or b
     print(c)
 end
+
+-- dead code elimination
+
+```lua
+local a = false
+if a then
+    print(true)
+end
+```
+becomes
+```lua
+```
+
+```lua
+local a = false
+local function check()
+    if a then
+        print(true)
+    end
+end
+
+a = true
+check()
+```
+
+should not change
+
+-- new --optimize rule:
+
+typeof is a newer function that supports more types than type, so we can replace type with typeof in some cases.
+```lua
+if typeof("") == "string" then
+end
+```
+becomes:
+```lua
+if type("") == "string" then
+end
+```
+
+type is SLIGHTY faster than typeof because it has less types to check
+we can optimize typeof to type for strings, numbers, booleans, tables, threads, and functions, but not for any userdata
