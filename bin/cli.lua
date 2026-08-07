@@ -2,7 +2,9 @@ local process = require("@lune/process")
 local fs = require("@lune/fs")
 local stdio = require("@lune/stdio")
 -- local DateTime = require("@lune/datetime")
-local luaia = require("@luaia")
+-- Require luaia by relative path so `lune build` bundles it into the
+-- standalone binary (the `@luaia` alias is not bundled).
+local luaia = require("../src")
 
 local args = process.args
 

@@ -39,6 +39,13 @@ jobs:
           echo "$HOME/.lune-bin" >> "$GITHUB_PATH"
           "$HOME/.lune-bin/lune" --version
 
+      # lune build only compiles a single file - it cannot inline the modules
+      # luaia is split across, so bundle everything into one file first.
+      - name: Bundle source into a single file
+        shell: bash
+        run: |
+          lune run scripts/bundle.luau
+
       - name: Build & package binaries
         shell: bash
         run: |
@@ -65,7 +72,7 @@ jobs:
 
             # lune build fails if the output directory does not exist yet
             mkdir -p "release/$target"
-            lune build bin/cli.lua --target "$target" -o "release/$target/$bin"
+            lune build build/bundled.luau --target "$target" -o "release/$target/$bin"
 
             (cd "release/$target" && zip -q "../luaia-${VERSION}-${target}.zip" "$bin")
           done
