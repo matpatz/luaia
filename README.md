@@ -10,7 +10,7 @@ luaia is published as a [Rokit](https://github.com/rojo-rbx/rokit) tool. Add it 
 
 ```toml
 [tools]
-luaia = "matpat/luaia@0.1.0"
+luaia = "matpatz/luaia@0.1.0"
 ```
 
 Then run `rokit install` and use it as a standalone `luaia` command:
@@ -25,7 +25,7 @@ luaia <file> -o <out>
 Requires [lune](https://github.com/lune-org/lune) 0.10.x to run. luaia is pure Luau — there is no compile step; it runs directly from source.
 
 ```
-git clone https://github.com/matpat/luaia.git
+git clone https://github.com/matpatz/luaia.git
 cd luaia
 lune run bin/cli.lua <file>
 ```
