@@ -20,6 +20,34 @@ luaia <file>
 luaia <file> -o <out>
 ```
 
+### Standalone binary
+
+Prebuilt binaries for every platform are attached to each [release](https://github.com/matpatz/luaia/releases) — no Lune or Rokit needed. Download the archive for your system, unzip it, and run.
+
+**Windows**
+
+1. Grab `luaia-0.1.0-windows-x86_64.zip` (or `luaia-0.1.0-windows-aarch64.zip` on ARM64).
+2. Unzip it — you'll get `luaia.exe`.
+3. Run it from a terminal:
+
+```
+luaia.exe <file>
+luaia.exe <file> -o <out>
+```
+
+Drop `luaia.exe` into a folder that's on your `PATH` (e.g. `C:\Windows`) and you can call `luaia` from anywhere.
+
+**macOS / Linux**
+
+Download the matching `macos-x86_64`, `macos-aarch64`, `linux-x86_64`, or `linux-aarch64` archive, extract the `luaia` binary, and make it executable:
+
+```
+chmod +x luaia
+./luaia <file>
+```
+
+The standalone binary takes the exact same flags as running from source — call it directly instead of `lune run bin/cli.lua`.
+
 ### From source
 
 Requires [lune](https://github.com/lune-org/lune) 0.10.x to run. luaia is pure Luau — there is no compile step; it runs directly from source.
@@ -40,13 +68,17 @@ rokit install
 
 ### CLI
 
+Using the standalone binary (see [Install](#install)):
+
 ```
-lune run bin/cli.lua <file>                  Minify a file (stdout)
-lune run bin/cli.lua <file> -o <out>         Write output to file
-lune run bin/cli.lua <file> -r               Minify and run output
-lune run bin/cli.lua <file> -o <out> -r      Write to file and run it
-lune run bin/cli.lua --stdin                 Read from stdin
+luaia <file>                  Minify a file (stdout)
+luaia <file> -o <out>         Write output to file
+luaia <file> -r               Minify and run output
+luaia <file> -o <out> -r      Write to file and run it
+luaia --stdin                 Read from stdin
 ```
+
+On Windows the binary is `luaia.exe`. Running from source is identical — just replace `luaia` with `lune run bin/cli.lua`.
 
 #### Options
 
@@ -67,17 +99,20 @@ lune run bin/cli.lua --stdin                 Read from stdin
 
 ```sh
 # Minify to stdout
-lune run bin/cli.lua script.luau
+luaia script.luau
 
 # Write to file
-lune run bin/cli.lua script.luau -o min.luau
+luaia script.luau -o min.luau
 
 # Minify and run
-lune run bin/cli.lua script.luau -r
+luaia script.luau -r
 
 # Pipe from stdin
-cat script.luau | lune run bin/cli.lua --stdin
+cat script.luau | luaia --stdin
 ```
+
+> From source, replace `luaia` with `lune run bin/cli.lua`.
+> `-r` runs the minified output through Lune, so it needs [lune](https://github.com/lune-org/lune) installed.
 
 ### Library
 
