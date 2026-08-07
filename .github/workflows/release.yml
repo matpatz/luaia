@@ -1,7 +1,7 @@
 name: Release
 
 # Builds luaia for all supported platforms and publishes it to a GitHub
-# release whenever a tag like `v0.1.0` is pushed. The zipped binaries are
+# release whenever a tag like `v0.1.1` is pushed. The zipped binaries are
 # named in Rokit's expected format so `rokit add matpatz/luaia` works out of
 # the box.
 

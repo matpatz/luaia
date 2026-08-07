@@ -10,7 +10,7 @@ luaia is published as a [Rokit](https://github.com/rojo-rbx/rokit) tool. Add it 
 
 ```toml
 [tools]
-luaia = "matpatz/luaia@0.1.0"
+luaia = "matpatz/luaia@0.1.1"
 ```
 
 Then run `rokit install` and use it as a standalone `luaia` command:
@@ -26,7 +26,7 @@ Prebuilt binaries for every platform are attached to each [release](https://gith
 
 **Windows**
 
-1. Grab `luaia-0.1.0-windows-x86_64.zip` (or `luaia-0.1.0-windows-aarch64.zip` on ARM64).
+1. Grab `luaia-0.1.1-windows-x86_64.zip` (or `luaia-0.1.1-windows-aarch64.zip` on ARM64).
 2. Unzip it — you'll get `luaia.exe`.
 3. Run it from a terminal:
 
