@@ -34,8 +34,10 @@ jobs:
             https://github.com/lune-org/lune/releases/download/v0.10.5/lune-0.10.5-linux-x86_64.zip \
             -o lune.zip
           unzip -o lune.zip -d "$HOME/.lune-bin"
+          # NOTE: $GITHUB_PATH only affects *later* steps, so call the binary
+          # by full path here within this step.
           echo "$HOME/.lune-bin" >> "$GITHUB_PATH"
-          lune --version
+          "$HOME/.lune-bin/lune" --version
 
       - name: Build & package binaries
         shell: bash
