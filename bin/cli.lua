@@ -13,11 +13,13 @@ if #args == 0 then
 	print("")
 	print("Usage:")
 	print("  lune run bin/cli.lua <file>           Minify a file")
+	print("  lune run bin/cli.lua -s <source>     Minify raw source")
 	print("  lune run bin/cli.lua <file> -o <out>  Minify and write to output file")
 	print("  lune run bin/cli.lua <file> -r        Minify and run output")
 	print("  lune run bin/cli.lua --stdin          Minify from stdin")
 	print("")
 	print("Options:")
+	print("  -s <source>  Minify raw source (instead of a file)")
 	print("  -o <file>    Write output to file (default: stdout)")
 	print("  -r           Run the minified output")
 	print("  -t           Print time taken to minify")
@@ -36,6 +38,7 @@ end
 local Options = {
 	InputFile = nil,
 	OutputFile = nil,
+	Source = nil,
 	RunOutput = false,
 	TimeMinify = false,
 	FromStdin = false,
@@ -60,11 +63,13 @@ while i <= #args do
 		print("")
 		print("Usage:")
 		print("  lune run bin/cli.lua <file>           Minify a file")
+		print("  lune run bin/cli.lua -s <source>     Minify raw source")
 		print("  lune run bin/cli.lua <file> -o <out>  Minify and write to output file")
 		print("  lune run bin/cli.lua <file> -r        Minify and run output")
 		print("  lune run bin/cli.lua --stdin          Minify from stdin")
 		print("")
 		print("Options:")
+		print("  -s <source>  Minify raw source (instead of a file)")
 		print("  -o <file>    Write output to file (default: stdout)")
 		print("  -r           Run the minified output")
 		print("  -t           Print time taken to minify")
@@ -80,6 +85,9 @@ while i <= #args do
 		process.exit(0)
 	elseif arg == "--stdin" then
 		Options.FromStdin = true
+	elseif arg == "-s" then
+		i += 1
+		Options.Source = args[i]
 	elseif arg == "-o" then
 		i += 1
 		Options.OutputFile = args[i]
@@ -108,8 +116,10 @@ while i <= #args do
 end
 
 local source: string
-if fromStdin then
-	source = stdio.read() or ""
+if Options.Source then
+	source = Options.Source
+elseif Options.FromStdin then
+	source = stdio.readToEnd() or ""
 elseif Options.InputFile then
 	if not fs.isFile(Options.InputFile) then
 		warn("Error: file not found: " .. Options.InputFile)
@@ -117,7 +127,7 @@ elseif Options.InputFile then
 	end
 	source = fs.readFile(Options.InputFile)
 else
-	warn("Error: no input. Provide a file or --stdin")
+	warn("Error: no input. Provide a file, -s <source>, or --stdin")
 	process.exit(1)
 end
 

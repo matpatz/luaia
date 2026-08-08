@@ -77,6 +77,7 @@ luaia <file>                  Minify a file (stdout)
 luaia <file> -o <out>         Write output to file
 luaia <file> -r               Minify and run output
 luaia <file> -o <out> -r      Write to file and run it
+luaia -s <source>             Minify raw source
 luaia --stdin                 Read from stdin
 ```
 
@@ -86,6 +87,7 @@ On Windows the binary is `luaia.exe`. Running from source is identical — just 
 
 | Flag | Description |
 |------|-------------|
+| `-s <source>` | Minify raw source instead of a file |
 | `-o <file>` | Write minified output to file |
 | `-t` | Logs time of minification |
 | `-r` | Run the minified output with lune |
@@ -104,6 +106,9 @@ On Windows the binary is `luaia.exe`. Running from source is identical — just 
 ```sh
 # Minify to stdout
 luaia script.luau
+
+# Minify raw source
+luaia -s "print('hello')"
 
 # Write to file
 luaia script.luau -o min.luau
