@@ -1,1 +1,1 @@
-local b=print;local e={z={r=32,["y"]=12},w={["j"]="a2",["a"]="a1"},l=true};if e.l then b(e.z.r+32);end;
+local vm=print;local b={p={e=32,["m"]=12},c={["o"]="a2",["g"]="a1"},v=true};vm(b.p.e+32);

@@ -10,7 +10,7 @@ luaia is published as a [Rokit](https://github.com/rojo-rbx/rokit) tool. Add it 
 
 ```toml
 [tools]
-luaia = "matpatz/luaia@0.2.0"
+luaia = "matpatz/luaia@0.3.0"
 ```
 
 Then run `rokit install` and use it as a standalone `luaia` command:
@@ -28,7 +28,7 @@ Prebuilt binaries for every platform are attached to each [release](https://gith
 
 **Windows**
 
-1. Grab `luaia-0.2.0-windows-x86_64.zip` (or `luaia-0.2.0-windows-aarch64.zip` on ARM64).
+1. Grab `luaia-0.3.0-windows-x86_64.zip` (or `luaia-0.3.0-windows-aarch64.zip` on ARM64).
 2. Unzip it — you'll get `luaia.exe`.
 3. Run it from a terminal:
 
@@ -95,6 +95,7 @@ On Windows the binary is `luaia.exe`. Running from source is identical — just 
 | `--no-bools` | Disable boolean literal localization |
 | `--no-dce` | Disable dead code elimination |
 | `--table-keys` | Enable table field renaming (off by default) |
+| `--table-fold` | Enable table constant folding (off by default) |
 | `--version` | Show version |
 | `--help` | Show help |
 
@@ -130,6 +131,7 @@ local result, errors = luaia.Minify(source, {
         LocalizeBooleans = true, -- hoist true/false literals into locals (default: true)
         DeadCodeElimination = true, -- remove dead code (default: true)
         RenameTableKeys = false, -- rename table fields (default: false)
+        TableConstantFolding = false, -- fold immutable table reads (default: false)
     },
 })
 
@@ -144,7 +146,7 @@ end
 
 ## Rules
 
-Rules are individually toggleable optimizations. Most are on by default; pass `Rules = { <Rule> = false }` to disable a specific one, or `--no-<rule>` from the CLI. `RenameTableKeys` is the exception — it is **off** by default and must be enabled with `Rules = { RenameTableKeys = true }` or `--table-keys`.
+Rules are individually toggleable optimizations. Most are on by default; pass `Rules = { <Rule> = false }` to disable a specific one, or `--no-<rule>` from the CLI. `RenameTableKeys` and `TableConstantFolding` are the exceptions — both are **off** by default and must be enabled with `Rules = { RenameTableKeys = true }` / `--table-keys`, or `Rules = { TableConstantFolding = true }` / `--table-fold`.
 
 | Rule | CLI flag | Description |
 |------|----------|-------------|
@@ -155,6 +157,7 @@ Rules are individually toggleable optimizations. Most are on by default; pass `R
 | `LocalizeBooleans` | `--no-bools` | Replace repeated `true`/`false` literals with aliased locals |
 | `DeadCodeElimination` | `--no-dce` | Fold constant conditions, drop dead branches, and remove unused locals |
 | `RenameTableKeys` | `--table-keys` | Rename table fields to short names (off by default) |
+| `TableConstantFolding` | `--table-fold` | Fold reads of immutable table literals (off by default) |
 
 ### LocalizeGlobals
 
@@ -200,6 +203,34 @@ end
 -- Output
 local a=print;a("a is false");
 ```
+
+### TableConstantFolding
+
+Extends dead code elimination with constant propagation through table literals. When a local holds a table literal that can never be mutated or observed from code luaia can't rewrite, reads like `b["a"]` fold like scalar constants — so conditions that are always true are unwrapped and always-false branches are dropped. This is an aggressive rule, so it is **off by default** (enable with `--table-fold` or `Rules = { TableConstantFolding = true }`). It only takes effect when `DeadCodeElimination` is also enabled.
+
+```lua
+-- Input
+local a = true
+local b = {
+    ["a"] = true
+}
+
+if a and b["a"] == true then
+    print("yay")
+end
+
+-- Output
+print("yay")
+```
+
+A table is left untouched — nothing is folded through it — whenever its contents could change or leak, so behavior never changes:
+
+- the local is reassigned or a field is written (`b.a = x`, `b.a += x`) anywhere in the file, including inside functions,
+- the table is returned, stored into a global or environment field (`_G.a = b`, `shared.a = b`, `getfenv().a = b`, ...),
+- the table (or one of its sub-tables) is aliased to another local,
+- the table is embedded in another table, passed to a call, used as a method receiver, or used as a table key.
+
+Only constant keys are folded — `b[someLocal]` and fields with side-effectful or otherwise non-constant values are left alone, and side-effectful initializers are preserved.
 
 ### RenameTableKeys
 

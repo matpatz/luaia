@@ -16,9 +16,10 @@ local DefaultRules = {
 	LocalizeBooleans = true,
 	DeadCodeElimination = true,
 	RenameTableKeys = false,
+	TableConstantFolding = false,
 }
 
-function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boolean?, ConstantFold: boolean?, RemoveRedundantParens: boolean?, LocalizeGlobals: boolean?, LocalizeBooleans: boolean?, DeadCodeElimination: boolean?, RenameTableKeys: boolean? }? }?): (string?, { string }?)
+function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boolean?, ConstantFold: boolean?, RemoveRedundantParens: boolean?, LocalizeGlobals: boolean?, LocalizeBooleans: boolean?, DeadCodeElimination: boolean?, RenameTableKeys: boolean?, TableConstantFolding: boolean? }? }?): (string?, { string }?)
 	Transformer.Options.Rules = table.clone(DefaultRules)
 
 	if Options then
@@ -43,6 +44,9 @@ function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boole
 			end
 			if Options.Rules.RenameTableKeys ~= nil then
 				Transformer.Options.Rules.RenameTableKeys = Options.Rules.RenameTableKeys
+			end
+			if Options.Rules.TableConstantFolding ~= nil then
+				Transformer.Options.Rules.TableConstantFolding = Options.Rules.TableConstantFolding
 			end
 		end
 	end

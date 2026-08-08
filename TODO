@@ -15,25 +15,3 @@ type is SLIGHTY faster than typeof because it has less types to check
 we can optimize typeof to type for strings, numbers, booleans, tables, threads, and functions, but not for any userdata
 
 the Rule will do other stuff
-
--- so yk dead code? remove
-```lua
-if false then do end end
-```
-
-but what about living code? a by defualt off rule in which code that will always be true is removed, for example:
-```lua
-local a = true
-local b = {
-    ["a"] = true
-}
-
-if a and b["a"] == true then
-    print("yay")
-end
-```
-
-would become
-```lua
-print("yay")
-```

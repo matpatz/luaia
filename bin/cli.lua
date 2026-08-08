@@ -27,6 +27,7 @@ if #args == 0 then
 	print("  --no-bools     Disable boolean literal localization")
 	print("  --no-dce       Disable dead code elimination")
 	print("  --table-keys   Enable table field renaming (off by default)")
+	print("  --table-fold   Enable table constant folding (off by default)")
 	print("  --version    Show version")
 	print("  --help       Show this help message")
 	process.exit(1)
@@ -45,13 +46,14 @@ local Options = {
 	LocalizeBooleans = true,
 	DeadCodeElimination = true,
 	RenameTableKeys = false,
+	TableConstantFolding = false,
 }
 
 local i = 1
 while i <= #args do
 	local arg = args[i]
 	if arg == "--version" then
-		print("luaia v0.2.0")
+		print("luaia v0.3.0")
 		process.exit(0)
 	elseif arg == "--help" then
 		print("luaia - Luau minifier")
@@ -72,6 +74,7 @@ while i <= #args do
 		print("  --no-bools     Disable boolean literal localization")
 		print("  --no-dce       Disable dead code elimination")
 		print("  --table-keys   Enable table field renaming (off by default)")
+		print("  --table-fold   Enable table constant folding (off by default)")
 		print("  --version    Show version")
 		print("  --help       Show this help message")
 		process.exit(0)
@@ -96,6 +99,8 @@ while i <= #args do
 		Options.DeadCodeElimination = false
 	elseif arg == "--table-keys" then
 		Options.RenameTableKeys = true
+	elseif arg == "--table-fold" then
+		Options.TableConstantFolding = true
 	elseif arg:sub(1, 1) ~= "-" then
 		Options.InputFile = arg
 	end
@@ -126,6 +131,7 @@ local Result, Errors = luaia.Minify(source, {
 		LocalizeBooleans = Options.LocalizeBooleans,
 		DeadCodeElimination = Options.DeadCodeElimination,
 		RenameTableKeys = Options.RenameTableKeys,
+		TableConstantFolding = Options.TableConstantFolding,
 	},
 })
 local ElapsedSeconds = os.clock() - StartClock

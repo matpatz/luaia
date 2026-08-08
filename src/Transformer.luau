@@ -18,6 +18,7 @@ Transformer.Options = {
 		LocalizeBooleans = true,
 		DeadCodeElimination = true,
 		RenameTableKeys = false,
+		TableConstantFolding = false,
 	},
 }
 
@@ -1172,6 +1173,299 @@ TransformStatement = function(node): typeof(node)
 	return node
 end
 
+-- // Table Constant Folding
+-- Off by default (TableConstantFolding). Treats table literals bound to locals
+-- as constants when the table can never be mutated or observed from code we
+-- can't rewrite. Reads like b["a"] then fold like scalar constants, so
+-- `if a and b["a"] == true then` is proven always-true and unwrapped.
+
+local DCE_UnknownField = {}
+
+local ConstTableCandidates: { any } = {}
+local ConstTableUnsafe: { any } = {}
+local ConstTableSafe: { any } = {}
+
+local function NormTableKey(v)
+	if type(v) == "string" then
+		local n = tonumber(v)
+		if n ~= nil then
+			return n
+		end
+	end
+	return v
+end
+
+local function ConstExprKey(expr)
+	if expr == nil then
+		return nil
+	elseif expr.kind == "ExprConstantString" then
+		return NormTableKey(expr.value)
+	elseif expr.kind == "ExprConstantInteger" then
+		return expr.low
+	elseif expr.kind == "ExprConstantNumber" then
+		return expr.value
+	end
+	return nil
+end
+
+-- Like ConstExprKey but keeps the exact key semantics Lua uses at runtime:
+-- string keys stay strings, so `{ ["1"] = x }` only matches `b["1"]`, not `b[1]`.
+local function RawConstKey(expr)
+	if expr == nil then
+		return nil
+	elseif expr.kind == "ExprConstantString" then
+		return expr.value
+	elseif expr.kind == "ExprConstantInteger" then
+		return expr.low
+	elseif expr.kind == "ExprConstantNumber" then
+		return expr.value
+	end
+	return nil
+end
+
+local function ChainBaseExpr(expr)
+	local e = expr
+	while e ~= nil do
+		if e.kind == "ExprGroup" then
+			e = e.expr
+		elseif e.kind == "ExprIndexName" or e.kind == "ExprIndexExpr" then
+			e = e.expr
+		else
+			break
+		end
+	end
+	if e ~= nil and e.kind == "ExprLocal" then
+		return e
+	end
+	return nil
+end
+
+local function ConstTableUnsafeBase(value)
+	local base = ChainBaseExpr(value)
+	if base and ConstTableCandidates[base["local"]] then
+		ConstTableUnsafe[base["local"]] = true
+	end
+end
+
+local CollectConstTableRefs
+
+local function CollectConstTableRefsImpl(node, context)
+	if type(node) ~= "table" or node.kind == nil then
+		return
+	end
+
+	if node.kind == "ExprLocal" then
+		if context == "escape" and ConstTableCandidates[node["local"]] then
+			ConstTableUnsafe[node["local"]] = true
+		end
+		return
+	elseif node.kind == "ExprIndexName" then
+		CollectConstTableRefs(node.expr, "value")
+	elseif node.kind == "ExprIndexExpr" then
+		CollectConstTableRefs(node.expr, "value")
+		CollectConstTableRefs(node.index, "value")
+	elseif node.kind == "ExprCall" then
+		if node.self then
+			local base = ChainBaseExpr(node.func)
+			if base and ConstTableCandidates[base["local"]] then
+				ConstTableUnsafe[base["local"]] = true
+			end
+			CollectConstTableRefs(node.func, "value")
+		else
+			CollectConstTableRefs(node.func, "escape")
+		end
+		for _, arg in node.args do
+			CollectConstTableRefs(arg, "escape")
+		end
+	elseif node.kind == "ExprFunction" then
+		if node.body then
+			CollectConstTableRefs(node.body, "value")
+		end
+	elseif node.kind == "ExprTable" then
+		for _, item in node.items do
+			if item.kind == "List" then
+				CollectConstTableRefs(item.value, "value")
+				ConstTableUnsafeBase(item.value)
+			elseif item.kind == "Record" then
+				CollectConstTableRefs(item.value, "value")
+				ConstTableUnsafeBase(item.value)
+			elseif item.kind == "General" then
+				if item.key then
+					CollectConstTableRefs(item.key, "escape")
+				end
+				CollectConstTableRefs(item.value, "value")
+				ConstTableUnsafeBase(item.value)
+			end
+		end
+	elseif node.kind == "ExprUnary" then
+		CollectConstTableRefs(node.expr, "value")
+	elseif node.kind == "ExprBinary" then
+		CollectConstTableRefs(node.left, "value")
+		CollectConstTableRefs(node.right, "value")
+	elseif node.kind == "ExprTypeAssertion" then
+		CollectConstTableRefs(node.expr, "value")
+	elseif node.kind == "ExprIfElse" then
+		CollectConstTableRefs(node.condition, "value")
+		CollectConstTableRefs(node.trueExpr, "value")
+		CollectConstTableRefs(node.falseExpr, "value")
+	elseif node.kind == "ExprInterpString" then
+		for _, expr in node.expressions do
+			CollectConstTableRefs(expr, "value")
+		end
+	elseif node.kind == "ExprGroup" then
+		CollectConstTableRefs(node.expr, context)
+	elseif node.kind == "ExprInstantiate" then
+		CollectConstTableRefs(node.expr, "value")
+	elseif node.kind == "StatBlock" then
+		for _, stat in node.body do
+			CollectConstTableRefs(stat, "value")
+		end
+	elseif node.kind == "StatIf" then
+		CollectConstTableRefs(node.condition, "value")
+		CollectConstTableRefs(node.thenbody, "value")
+		if node.elsebody then
+			CollectConstTableRefs(node.elsebody, "value")
+		end
+	elseif node.kind == "StatWhile" then
+		CollectConstTableRefs(node.condition, "value")
+		CollectConstTableRefs(node.body, "value")
+	elseif node.kind == "StatRepeat" then
+		CollectConstTableRefs(node.body, "value")
+		CollectConstTableRefs(node.condition, "value")
+	elseif node.kind == "StatFor" then
+		CollectConstTableRefs(node.from, "value")
+		CollectConstTableRefs(node.to, "value")
+		if node.step then
+			CollectConstTableRefs(node.step, "value")
+		end
+		CollectConstTableRefs(node.body, "value")
+	elseif node.kind == "StatForIn" then
+		for _, value in node.values do
+			CollectConstTableRefs(value, "value")
+		end
+		CollectConstTableRefs(node.body, "value")
+	elseif node.kind == "StatLocal" then
+		for i, var in node.vars do
+			local value = node.values[i]
+			if value ~= nil then
+				local v = value
+				while v.kind == "ExprGroup" do
+					v = v.expr
+				end
+				if v.kind == "ExprTable" and not ConstTableCandidates[var] then
+					ConstTableCandidates[var] = true
+				end
+			end
+		end
+		for _, value in node.values do
+			CollectConstTableRefs(value, "value")
+		end
+		for _, value in node.values do
+			ConstTableUnsafeBase(value)
+		end
+	elseif node.kind == "StatAssign" then
+		local allLocal = true
+		for _, target in node.vars do
+			if target.kind ~= "ExprLocal" then
+				allLocal = false
+				break
+			end
+		end
+		for _, target in node.vars do
+			if target.kind == "ExprLocal" then
+				if ConstTableCandidates[target["local"]] then
+					ConstTableUnsafe[target["local"]] = true
+				end
+			else
+				ConstTableUnsafeBase(target)
+			end
+		end
+		local valueContext = allLocal and "value" or "escape"
+		for _, value in node.values do
+			CollectConstTableRefs(value, valueContext)
+		end
+		if allLocal then
+			for _, value in node.values do
+				ConstTableUnsafeBase(value)
+			end
+		end
+	elseif node.kind == "StatCompoundAssign" then
+		ConstTableUnsafeBase(node.var)
+		CollectConstTableRefs(node.var, "value")
+		CollectConstTableRefs(node.value, "value")
+	elseif node.kind == "StatReturn" then
+		for _, value in node.list do
+			CollectConstTableRefs(value, "escape")
+		end
+	elseif node.kind == "StatExpr" then
+		CollectConstTableRefs(node.expr, "value")
+	elseif node.kind == "StatFunction" then
+		CollectConstTableRefs(node.name, "value")
+		CollectConstTableRefs(node.func, "value")
+	elseif node.kind == "StatLocalFunction" then
+		CollectConstTableRefs(node.func, "value")
+	end
+end
+
+CollectConstTableRefs = CollectConstTableRefsImpl
+
+local function CollectConstTableSafety(ast)
+	ConstTableCandidates = {}
+	ConstTableUnsafe = {}
+	CollectConstTableRefs(ast, "value")
+	local safe = {}
+	for var in pairs(ConstTableCandidates) do
+		if not ConstTableUnsafe[var] then
+			safe[var] = true
+		end
+	end
+	return safe
+end
+
+local DCEEvalConst
+
+local function DCEMakeConstTable(entries)
+	return {
+		isConstTable = true,
+		entries = entries,
+	}
+end
+
+local function DCETableConstFromExpr(node, env, allowTable)
+	if not allowTable or node.kind ~= "ExprTable" then
+		return nil
+	end
+	local entries = {}
+	local index = 1
+	for _, item in node.items do
+		local key
+		if item.kind == "List" then
+			key = index
+			index += 1
+		elseif item.kind == "Record" then
+			key = item.key.value
+		elseif item.kind == "General" then
+			if item.key == nil then
+				key = index
+				index += 1
+			else
+				local k = RawConstKey(item.key)
+				if k == nil then
+					return nil
+				end
+				key = k
+			end
+		end
+		local v = DCEEvalConst(item.value, env, allowTable)
+		if v == nil then
+			entries[key] = DCE_UnknownField
+		else
+			entries[key] = v
+		end
+	end
+	return DCEMakeConstTable(entries)
+end
+
 -- // Dead Code Elimination
 -- Folds statically-known conditions (constant locals, literals, constant
 -- arithmetic), removes unreachable branches, and drops unused locals.
@@ -1228,7 +1522,9 @@ end
 
 -- Evaluates a condition expression to a constant when possible.
 -- Returns: boolean | number | string | DCE_NilConst | DCE_OtherConst, or nil when unknown.
-local function DCEEvalConst(node, env): any
+-- allowTable additionally permits constant evaluation of immutable table
+-- literals and reads of their fields (see TableConstantFolding).
+DCEEvalConst = function(node, env, allowTable): any
 	if type(node) ~= "table" or node.kind == nil then
 		return nil
 	end
@@ -1245,10 +1541,10 @@ local function DCEEvalConst(node, env): any
 	elseif node.kind == "ExprLocal" then
 		return env[node["local"]]
 	elseif node.kind == "ExprGroup" then
-		return DCEEvalConst(node.expr, env)
+		return DCEEvalConst(node.expr, env, allowTable)
 	elseif node.kind == "ExprUnary" then
 		if node.op == 0 then -- not
-			local v = DCEEvalConst(node.expr, env)
+			local v = DCEEvalConst(node.expr, env, allowTable)
 			if v == nil then
 				return nil
 			end
@@ -1257,10 +1553,43 @@ local function DCEEvalConst(node, env): any
 			end
 			return false
 		end
+	elseif node.kind == "ExprIndexName" then
+		if allowTable then
+			local base = DCEEvalConst(node.expr, env, allowTable)
+			if type(base) == "table" and base.isConstTable then
+				local v = base.entries[node.index]
+				if v == DCE_UnknownField then
+					return nil
+				end
+				if v == nil then
+					return DCE_NilConst
+				end
+				return v
+			end
+		end
+		return nil
+	elseif node.kind == "ExprIndexExpr" then
+		if allowTable then
+			local base = DCEEvalConst(node.expr, env, allowTable)
+			if type(base) == "table" and base.isConstTable then
+				local key = RawConstKey(node.index)
+				if key ~= nil then
+					local v = base.entries[key]
+					if v == DCE_UnknownField then
+						return nil
+					end
+					if v == nil then
+						return DCE_NilConst
+					end
+					return v
+				end
+			end
+		end
+		return nil
 	elseif node.kind == "ExprBinary" then
 		if node.op == 8 or node.op == 9 then -- ~=, ==
-			local l = DCEEvalConst(node.left, env)
-			local r = DCEEvalConst(node.right, env)
+			local l = DCEEvalConst(node.left, env, allowTable)
+			local r = DCEEvalConst(node.right, env, allowTable)
 			if l == nil or r == nil then
 				return nil
 			end
@@ -1272,7 +1601,7 @@ local function DCEEvalConst(node, env): any
 			end
 			return l ~= r
 		elseif node.op == 14 or node.op == 15 then -- and, or
-			local l = DCEEvalConst(node.left, env)
+			local l = DCEEvalConst(node.left, env, allowTable)
 			if l == nil then
 				return nil
 			end
@@ -1281,23 +1610,23 @@ local function DCEEvalConst(node, env): any
 				if lFalsy then
 					return l
 				end
-				return DCEEvalConst(node.right, env)
+				return DCEEvalConst(node.right, env, allowTable)
 			else
 				if lFalsy then
-					return DCEEvalConst(node.right, env)
+					return DCEEvalConst(node.right, env, allowTable)
 				end
 				return l
 			end
 		elseif node.op == 7 then -- ..
-			local l = DCEEvalConst(node.left, env)
-			local r = DCEEvalConst(node.right, env)
+			local l = DCEEvalConst(node.left, env, allowTable)
+			local r = DCEEvalConst(node.right, env, allowTable)
 			if type(l) == "string" and type(r) == "string" then
 				return l .. r
 			end
 			return nil
 		elseif node.op >= 10 and node.op <= 13 then -- comparisons
-			local l = DCEEvalConst(node.left, env)
-			local r = DCEEvalConst(node.right, env)
+			local l = DCEEvalConst(node.left, env, allowTable)
+			local r = DCEEvalConst(node.right, env, allowTable)
 			if type(l) == "number" and type(r) == "number" then
 				if node.op == 10 then return l < r
 				elseif node.op == 11 then return l <= r
@@ -1306,8 +1635,8 @@ local function DCEEvalConst(node, env): any
 			end
 			return nil
 		else
-			local l = DCEEvalConst(node.left, env)
-			local r = DCEEvalConst(node.right, env)
+			local l = DCEEvalConst(node.left, env, allowTable)
+			local r = DCEEvalConst(node.right, env, allowTable)
 			if type(l) == "number" and type(r) == "number" then
 				local opName = OpToString[node.op]
 				if opName then
@@ -1319,6 +1648,8 @@ local function DCEEvalConst(node, env): any
 			end
 			return nil
 		end
+	elseif node.kind == "ExprTable" then
+		return DCETableConstFromExpr(node, env, allowTable)
 	end
 	return nil
 end
@@ -1512,7 +1843,7 @@ end
 
 local function DCEFoldIf(stat, env)
 	DCEProcessExpr(stat.condition, env)
-	local c = DCEEvalConst(stat.condition, env)
+	local c = DCEEvalConst(stat.condition, env, true)
 	if c ~= nil then
 		stat.condition = DCEMakeBoolNode(stat.condition.location, DCETruthiness(c))
 		if stat.condition.value then
@@ -1568,7 +1899,7 @@ DCEFoldStat = function(stat, env)
 		DCEFoldIf(stat, env)
 	elseif stat.kind == "StatWhile" then
 		DCEProcessExpr(stat.condition, env)
-		local c = DCEEvalConst(stat.condition, env)
+		local c = DCEEvalConst(stat.condition, env, true)
 		if c ~= nil then
 			stat.condition = DCEMakeBoolNode(stat.condition.location, DCETruthiness(c))
 		end
@@ -1586,7 +1917,7 @@ DCEFoldStat = function(stat, env)
 		local bodyEnv = table_clone(env)
 		DCEFoldBlock(stat.body, bodyEnv)
 		DCEProcessExpr(stat.condition, bodyEnv)
-		local c = DCEEvalConst(stat.condition, bodyEnv)
+		local c = DCEEvalConst(stat.condition, bodyEnv, true)
 		if c ~= nil then
 			stat.condition = DCEMakeBoolNode(stat.condition.location, DCETruthiness(c))
 		end
@@ -1625,7 +1956,11 @@ DCEFoldStat = function(stat, env)
 		end
 		if #stat.vars == #stat.values then
 			for i, var in stat.vars do
-				env[var] = DCEEvalConst(stat.values[i], env)
+				if ConstTableSafe[var] then
+					env[var] = DCEEvalConst(stat.values[i], env, true)
+				else
+					env[var] = DCEEvalConst(stat.values[i], env, false)
+				end
 			end
 		else
 			for _, var in stat.vars do
@@ -1653,7 +1988,7 @@ DCEFoldStat = function(stat, env)
 			end
 			if allLocal then
 				for i, target in stat.vars do
-					newBindings[target["local"]] = DCEEvalConst(stat.values[i], env)
+					newBindings[target["local"]] = DCEEvalConst(stat.values[i], env, false)
 				end
 			else
 				for _, target in stat.vars do
@@ -2120,46 +2455,6 @@ local TableKeyMutated: { any } = {}
 local TableKeyEscaped: { any } = {}
 local TableKeyMaps: { any } = {}
 
-local function NormTableKey(v)
-	if type(v) == "string" then
-		local n = tonumber(v)
-		if n ~= nil then
-			return n
-		end
-	end
-	return v
-end
-
-local function ConstExprKey(expr)
-	if expr == nil then
-		return nil
-	elseif expr.kind == "ExprConstantString" then
-		return NormTableKey(expr.value)
-	elseif expr.kind == "ExprConstantInteger" then
-		return expr.low
-	elseif expr.kind == "ExprConstantNumber" then
-		return expr.value
-	end
-	return nil
-end
-
-local function ChainBaseExpr(expr)
-	local e = expr
-	while e ~= nil do
-		if e.kind == "ExprGroup" then
-			e = e.expr
-		elseif e.kind == "ExprIndexName" or e.kind == "ExprIndexExpr" then
-			e = e.expr
-		else
-			break
-		end
-	end
-	if e ~= nil and e.kind == "ExprLocal" then
-		return e
-	end
-	return nil
-end
-
 local function BuildTableKeyMap(tableNode)
 	local map = {}
 	for _, item in tableNode.items do
@@ -2624,6 +2919,11 @@ function Transformer.Transform(ast)
 	NameGenerator:Reset()
 
 	if Transformer.Options.Rules.DeadCodeElimination then
+		if Transformer.Options.Rules.TableConstantFolding then
+			ConstTableSafe = CollectConstTableSafety(ast)
+		else
+			ConstTableSafe = {}
+		end
 		DCEFoldBlock(ast, {})
 		ast = DCERemoveDeadBlock(ast)
 		local referenced = {}
