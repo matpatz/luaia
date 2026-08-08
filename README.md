@@ -10,7 +10,7 @@ luaia is published as a [Rokit](https://github.com/rojo-rbx/rokit) tool. Add it 
 
 ```toml
 [tools]
-luaia = "matpatz/luaia@0.1.1"
+luaia = "matpatz/luaia@0.2.0"
 ```
 
 Then run `rokit install` and use it as a standalone `luaia` command:
@@ -28,7 +28,7 @@ Prebuilt binaries for every platform are attached to each [release](https://gith
 
 **Windows**
 
-1. Grab `luaia-0.1.1-windows-x86_64.zip` (or `luaia-0.1.1-windows-aarch64.zip` on ARM64).
+1. Grab `luaia-0.2.0-windows-x86_64.zip` (or `luaia-0.2.0-windows-aarch64.zip` on ARM64).
 2. Unzip it — you'll get `luaia.exe`.
 3. Run it from a terminal:
 
@@ -94,6 +94,7 @@ On Windows the binary is `luaia.exe`. Running from source is identical — just 
 | `--no-localize` | Disable global function localization |
 | `--no-bools` | Disable boolean literal localization |
 | `--no-dce` | Disable dead code elimination |
+| `--table-keys` | Enable table field renaming (off by default) |
 | `--version` | Show version |
 | `--help` | Show help |
 
@@ -128,6 +129,7 @@ local result, errors = luaia.Minify(source, {
         LocalizeGlobals = true,  -- hoist global functions into locals (default: true)
         LocalizeBooleans = true, -- hoist true/false literals into locals (default: true)
         DeadCodeElimination = true, -- remove dead code (default: true)
+        RenameTableKeys = false, -- rename table fields (default: false)
     },
 })
 
@@ -142,7 +144,7 @@ end
 
 ## Rules
 
-Rules are individually toggleable optimizations. Enable them all by default; pass `Rules = { <Rule> = false }` to disable a specific one, or `--no-<rule>` from the CLI.
+Rules are individually toggleable optimizations. Most are on by default; pass `Rules = { <Rule> = false }` to disable a specific one, or `--no-<rule>` from the CLI. `RenameTableKeys` is the exception — it is **off** by default and must be enabled with `Rules = { RenameTableKeys = true }` or `--table-keys`.
 
 | Rule | CLI flag | Description |
 |------|----------|-------------|
@@ -152,6 +154,7 @@ Rules are individually toggleable optimizations. Enable them all by default; pas
 | `LocalizeGlobals` | `--no-localize` | Hoist global function references into local variables |
 | `LocalizeBooleans` | `--no-bools` | Replace repeated `true`/`false` literals with aliased locals |
 | `DeadCodeElimination` | `--no-dce` | Fold constant conditions, drop dead branches, and remove unused locals |
+| `RenameTableKeys` | `--table-keys` | Rename table fields to short names (off by default) |
 
 ### LocalizeGlobals
 
@@ -197,6 +200,38 @@ end
 -- Output
 local a=print;a("a is false");
 ```
+
+### RenameTableKeys
+
+Renames the fields of table literals assigned to locals — including nested tables — to short generated names, and rewrites every access accordingly. This is an obfuscation rule, so it is **off by default** (enable with `--table-keys` or `Rules = { RenameTableKeys = true }`).
+
+```lua
+-- Input
+local a = {
+    sub1 = { x = 32 },
+    m = true
+}
+if a.m then
+    print(a.sub1.x + 32)
+end
+
+-- Output (abbreviated)
+local a = {
+    b = { c = 32 },
+    d = true
+}
+if a.d then
+    print(a.b.c + 32)
+end
+```
+
+A table is left untouched whenever its fields could be observed from code luaia can't rewrite, so renaming can't break anything:
+
+- the local is reassigned after initialization,
+- the table is returned (`return a` in a module),
+- the table is stored into a global or environment field (`_G.a = a`, `shared.a = a`, `getfenv().a = a`, `getgenv().a = a`, or any `x.y = a`),
+- the table (or one of its sub-tables) is aliased to another local,
+- the table is embedded in another table, passed to a call, used as a method receiver, or used as a table key.
 
 Side-effectful initializers are preserved (e.g. `local x = print("hi")`), and a branch is only removed when its condition is a known constant, so behavior never changes.
 

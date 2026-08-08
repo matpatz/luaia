@@ -3,6 +3,7 @@ local Utils = require("./utils")
 local Generator = {}
 
 local string_gsub = string.gsub
+local string_byte = string.byte
 local string_match = string.match
 local string_sub = string.sub
 local table_concat = table.concat
@@ -108,7 +109,16 @@ local function GenerateExpression(node): string
 			[14] = " and ", [15] = " or ",
 		}
 		local op = opMap[node.op] or " "
-		return GenerateExpression(node.left) .. op .. GenerateExpression(node.right)
+		local left = GenerateExpression(node.left)
+		if node.op == 7 then
+			-- Luau lexes e.g. `10.."x"` as a malformed number, so keep a space
+			-- between a number literal and the concatenation operator.
+			local lastByte = string_byte(left, #left)
+			if lastByte and lastByte >= 48 and lastByte <= 57 then
+				op = " .."
+			end
+		end
+		return left .. op .. GenerateExpression(node.right)
 	elseif node.kind == "ExprTypeAssertion" then
 		return GenerateExpression(node.expr)
 	elseif node.kind == "ExprIfElse" then

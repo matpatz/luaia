@@ -669,6 +669,7 @@ export type AstTypePackExplicit = {
 	location: Location,
 	types: { AstType },
 	tailType: AstTypePack?,
+	optional: boolean,
 }
 
 export type AstTypePackVariadic = {

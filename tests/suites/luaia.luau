@@ -57,6 +57,12 @@ test.suite("luaia", function()
 			check.not_nil(ast)
 			check.equal(errors, nil)
 		end)
+
+		test.case("should parse nullable tuple return types", function()
+			local ast, errors = luaia.Parser.Parse("local function f(): (number, string)?\n\treturn nil\nend")
+			check.not_nil(ast)
+			check.equal(errors, nil)
+		end)
 	end)
 
 	test.suite("minify", function()
@@ -90,6 +96,14 @@ test.suite("luaia", function()
 			check.equal(errors, nil)
 		end)
 
+		test.case("should rename variables to lowercase random names", function()
+			local result, errors = luaia.Minify("local MyVariable = 1\nprint(MyVariable)")
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "MyVariable", 1, true), nil)
+			check.not_nil(string.find(result, "local [a-z]+=", 1))
+		end)
+
 		test.case("should handle functions", function()
 			local result, errors = luaia.Minify("local function add(a, b) return a + b end")
 			check.not_nil(result)
@@ -100,6 +114,14 @@ test.suite("luaia", function()
 			local result, errors = luaia.Minify("local t = {a = 1, b = 2}")
 			check.not_nil(result)
 			check.equal(errors, nil)
+		end)
+
+		test.case("should keep concatenation after a number literal valid", function()
+			local result, errors = luaia.Minify('print(10 .. "x")')
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "10..", 1, true), nil)
+			check.not_nil(string.find(result, "10 ..", 1, true))
 		end)
 
 		test.case("should handle if statements", function()
@@ -259,6 +281,113 @@ check()
 			check.not_nil(result)
 			check.equal(errors, nil)
 			check.not_nil(string.find(result, "if ", 1))
+		end)
+	end)
+
+	test.suite("table key renaming", function()
+		test.case("should be off by default", function()
+			local result, errors = luaia.Minify("local a = { sub1 = { x = 1 } }\nprint(a.sub1.x)")
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "sub1", 1, true))
+		end)
+
+		test.case("should rename keys and rewrite accesses when enabled", function()
+			local source = [[
+local a = {
+    sub1 = { x = 1 },
+    m = true
+}
+if a.m then
+    print(a.sub1.x)
+end
+]]
+			local result, errors = luaia.Minify(source, { Rules = { RenameTableKeys = true } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "sub1", 1, true), nil)
+			check.equal(string.find(result, "m", 1, true), nil)
+		end)
+
+		test.case("should rename nested table keys", function()
+			local source = [[
+local a = {
+    sub1 = {
+        a = 32,
+        ["bnm"] = 12
+    },
+    sub2 = {
+        ["1"] = "a2",
+        ["32"] = "a1"
+    }
+}
+print(a.sub1.a + a.sub2["1"])
+]]
+			local result, errors = luaia.Minify(source, { Rules = { RenameTableKeys = true } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "sub1", 1, true), nil)
+			check.equal(string.find(result, "sub2", 1, true), nil)
+			check.equal(string.find(result, "bnm", 1, true), nil)
+		end)
+
+		test.case("should preserve behavior after renaming", function()
+			local source = [[
+local a = {
+    sub1 = { x = 40 },
+    m = true
+}
+if a.m then
+    print(a.sub1.x + 2)
+end
+]]
+			local result, errors = luaia.Minify(source, { Rules = { RenameTableKeys = true } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "sub1", 1, true), nil)
+			check.not_nil(string.find(result, "print", 1, true))
+		end)
+
+		test.case("should skip returned tables", function()
+			local result, errors = luaia.Minify("local a = { sub1 = { x = 1 } }\nreturn a", { Rules = { RenameTableKeys = true } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "sub1", 1, true))
+		end)
+
+		test.case("should skip tables stored into globals", function()
+			local result, errors = luaia.Minify("local a = { sub1 = { x = 1 } }\n_G.a = a", { Rules = { RenameTableKeys = true } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "sub1", 1, true))
+		end)
+
+		test.case("should skip tables stored into the environment", function()
+			local result, errors = luaia.Minify("local a = { sub1 = { x = 1 } }\ngetfenv().a = a", { Rules = { RenameTableKeys = true } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "sub1", 1, true))
+		end)
+
+		test.case("should skip reassigned tables", function()
+			local result, errors = luaia.Minify("local a = { sub1 = { x = 1 } }\na = { other = 2 }\nprint(a.sub1.x)", { Rules = { RenameTableKeys = true } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "sub1", 1, true))
+		end)
+
+		test.case("should skip tables passed to calls", function()
+			local result, errors = luaia.Minify("local a = { sub1 = { x = 1 } }\nprint(a)", { Rules = { RenameTableKeys = true } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "sub1", 1, true))
+		end)
+
+		test.case("should skip aliased tables", function()
+			local result, errors = luaia.Minify("local a = { sub1 = { x = 1 } }\nlocal b = a.sub1\nprint(b.x)", { Rules = { RenameTableKeys = true } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "sub1", 1, true))
 		end)
 	end)
 

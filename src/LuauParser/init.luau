@@ -4836,6 +4836,7 @@ local function emptyReturnTypePack(location: Syntax.Location): Syntax.AstTypePac
 		location = location,
 		types = EmptyArray :: { Syntax.AstType },
 		tailType = nil,
+		optional = false,
 	} :: Syntax.AstTypePackExplicit
 end
 
@@ -6025,6 +6026,7 @@ allowPack: boolean, attributes: Syntax.Attrs
 				kind = "TypePackExplicit",
 				location = beginLocation,
 				types = paramTypes,
+				optional = false,
 			} :: Syntax.AstTypePackExplicit
 
 			if argCommaPos and openArgsPosition and closeArgsPosition then
@@ -6064,6 +6066,7 @@ allowPack: boolean, attributes: Syntax.Attrs
 			location = beginLocation,
 			types = paramTypes,
 			tailType = varargAnnotation,
+			optional = false,
 		} :: Syntax.AstTypePackExplicit
 
 		if argCommaPos and openArgsPosition and closeArgsPosition then
@@ -6937,6 +6940,7 @@ local function parseReturnTypeImpl(): Syntax.AstTypePack
 				kind = "TypePackExplicit",
 				location = type_.location,
 				types = { type_ },
+				optional = false,
 			} :: Syntax.AstTypePackExplicit
 
 			if storeCstData then
@@ -7019,6 +7023,7 @@ local function parseReturnTypeImpl(): Syntax.AstTypePack
 				},
 				types = { returnType },
 				tailType = varargAnnotation,
+				optional = false,
 			} :: Syntax.AstTypePackExplicit
 
 			if storeCstData then
@@ -7029,6 +7034,13 @@ local function parseReturnTypeImpl(): Syntax.AstTypePack
 			return node
 		end
 
+		local isOptional = false
+		if token_type == 63 then
+			nextLexeme()
+			isOptional = true
+			endLine, endColumn = prev_end_line, prev_end_col
+		end
+
 		local node = {
 			kind = "TypePackExplicit",
 			location = {
@@ -7037,6 +7049,7 @@ local function parseReturnTypeImpl(): Syntax.AstTypePack
 			},
 			types = result,
 			tailType = varargAnnotation,
+			optional = isOptional,
 		} :: Syntax.AstTypePackExplicit
 
 		if commaPositions then
@@ -7083,6 +7096,7 @@ local function parseReturnTypeImpl(): Syntax.AstTypePack
 			end_ = tail.location.end_,
 		},
 		types = { tail },
+		optional = false,
 	} :: Syntax.AstTypePackExplicit
 
 	if storeCstData then

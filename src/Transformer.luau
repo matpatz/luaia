@@ -3,7 +3,6 @@ local Utils = require("./utils")
 local Transformer = {}
 
 local math_floor = math.floor
-local string_char = string.char
 local string_find = string.find
 local string_sub = string.sub
 local table_clone = table.clone
@@ -18,71 +17,13 @@ Transformer.Options = {
 		LocalizeGlobals = true,
 		LocalizeBooleans = true,
 		DeadCodeElimination = true,
+		RenameTableKeys = false,
 	},
 }
 
 local VariableMap: { [string]: string } = {}
-local VariableCounter = 0
-local UsedNames: { [string]: boolean } = {}
 
-local ReservedNames = {
-	["self"] = true,
-	["true"] = true,
-	["false"] = true,
-	["nil"] = true,
-	["and"] = true,
-	["break"] = true,
-	["do"] = true,
-	["else"] = true,
-	["elseif"] = true,
-	["end"] = true,
-	["for"] = true,
-	["function"] = true,
-	["if"] = true,
-	["in"] = true,
-	["local"] = true,
-	["not"] = true,
-	["or"] = true,
-	["repeat"] = true,
-	["return"] = true,
-	["then"] = true,
-	["until"] = true,
-	["while"] = true,
-	["continue"] = true,
-	["type"] = true,
-	["typeof"] = true,
-	["declare"] = true,
-	["export"] = true,
-} -- @native
-
-local function GenerateName(): string
-	VariableCounter += 1
-	local count = VariableCounter
-	local name = ""
-	local base = count
-
-	while base > 0 do
-		base -= 1
-		local char = base % 52
-		if char < 26 then
-			name = string_char(97 + char) .. name
-		else
-			name = string_char(65 + char - 26) .. name
-		end
-		base = math_floor(base / 52)
-	end
-
-	if #name == 0 then
-		name = "a"
-	end
-
-	if ReservedNames[name] or UsedNames[name] then
-		return GenerateName()
-	end
-
-	UsedNames[name] = true
-	return name
-end
+local NameGenerator = Utils.CreateNameGenerator()
 
 local function FoldConstantBinary(left: number, op: string, right: number): number?
 	if op == "+" then
@@ -653,13 +594,12 @@ local function TransformExpression(node): typeof(node)
 
 	elseif node.kind == "ExprFunction" then
 		local savedMap = table_clone(VariableMap)
-		local savedCounter = VariableCounter
-		local savedNames = table_clone(UsedNames)
+		local savedNames = NameGenerator:Snapshot()
 
 		local selfParam = nil
 		if node.self then
 			if not VariableMap[node.self.name] then
-				VariableMap[node.self.name] = GenerateName()
+				VariableMap[node.self.name] = NameGenerator:Generate()
 			end
 			selfParam = {
 				name = VariableMap[node.self.name],
@@ -674,7 +614,7 @@ local function TransformExpression(node): typeof(node)
 		local newParams = {}
 		for _, param in node.args do
 			if not VariableMap[param.name] then
-				VariableMap[param.name] = GenerateName()
+				VariableMap[param.name] = NameGenerator:Generate()
 			end
 			table_insert(newParams, {
 				name = VariableMap[param.name],
@@ -689,8 +629,7 @@ local function TransformExpression(node): typeof(node)
 		local newBody = TransformStatementBlock(node.body)
 
 		VariableMap = savedMap
-		VariableCounter = savedCounter
-		UsedNames = savedNames
+		NameGenerator:Restore(savedNames)
 
 		return {
 			kind = "ExprFunction",
@@ -1028,7 +967,7 @@ TransformStatement = function(node): typeof(node)
 		local newNames = {}
 		for _, name in node.vars do
 			if not VariableMap[name.name] then
-				VariableMap[name.name] = GenerateName()
+				VariableMap[name.name] = NameGenerator:Generate()
 			end
 			table_insert(newNames, {
 				name = VariableMap[name.name],
@@ -1086,7 +1025,7 @@ TransformStatement = function(node): typeof(node)
 
 	elseif node.kind == "StatFor" then
 		if not VariableMap[node.var.name] then
-			VariableMap[node.var.name] = GenerateName()
+			VariableMap[node.var.name] = NameGenerator:Generate()
 		end
 		return {
 			kind = "StatFor",
@@ -1109,7 +1048,7 @@ TransformStatement = function(node): typeof(node)
 		local newNames = {}
 		for _, name in node.vars do
 			if not VariableMap[name.name] then
-				VariableMap[name.name] = GenerateName()
+				VariableMap[name.name] = NameGenerator:Generate()
 			end
 			table_insert(newNames, {
 				name = VariableMap[name.name],
@@ -1203,7 +1142,7 @@ TransformStatement = function(node): typeof(node)
 
 	elseif node.kind == "StatLocalFunction" then
 		if not VariableMap[node.name.name] then
-			VariableMap[node.name.name] = GenerateName()
+			VariableMap[node.name.name] = NameGenerator:Generate()
 		end
 		return {
 			kind = "StatLocalFunction",
@@ -2167,10 +2106,522 @@ local function DCERemoveUnused(node, referenced)
 	return node
 end
 
+-- // Table Key Renaming
+-- Renames the fields of table literals assigned to locals (including nested
+-- tables) to short generated names and rewrites every access accordingly.
+-- Off by default (RenameTableKeys). A table is left untouched whenever it can
+-- be observed from code we can't rewrite: the local is reassigned, the table
+-- is returned, stored into a global/env field (_G.x, shared.x, getfenv().x,
+-- getgenv().x, ...), aliased to another local, embedded in another table,
+-- passed to a call, or used as a call target / table key / method receiver.
+
+local TableKeyCandidates: { any } = {}
+local TableKeyMutated: { any } = {}
+local TableKeyEscaped: { any } = {}
+local TableKeyMaps: { any } = {}
+
+local function NormTableKey(v)
+	if type(v) == "string" then
+		local n = tonumber(v)
+		if n ~= nil then
+			return n
+		end
+	end
+	return v
+end
+
+local function ConstExprKey(expr)
+	if expr == nil then
+		return nil
+	elseif expr.kind == "ExprConstantString" then
+		return NormTableKey(expr.value)
+	elseif expr.kind == "ExprConstantInteger" then
+		return expr.low
+	elseif expr.kind == "ExprConstantNumber" then
+		return expr.value
+	end
+	return nil
+end
+
+local function ChainBaseExpr(expr)
+	local e = expr
+	while e ~= nil do
+		if e.kind == "ExprGroup" then
+			e = e.expr
+		elseif e.kind == "ExprIndexName" or e.kind == "ExprIndexExpr" then
+			e = e.expr
+		else
+			break
+		end
+	end
+	if e ~= nil and e.kind == "ExprLocal" then
+		return e
+	end
+	return nil
+end
+
+local function BuildTableKeyMap(tableNode)
+	local map = {}
+	for _, item in tableNode.items do
+		local key
+		if item.kind == "Record" then
+			key = item.key.value
+		elseif item.kind == "General" and item.key then
+			key = ConstExprKey(item.key)
+		else
+			continue
+		end
+		if key == nil then
+			continue
+		end
+		local entry = map[key]
+		if entry == nil then
+			entry = { name = NameGenerator:Generate() }
+			map[key] = entry
+		end
+		if item.value and item.value.kind == "ExprTable" then
+			entry.sub = BuildTableKeyMap(item.value)
+		end
+	end
+	return map
+end
+
+local function ChainValueIsTable(value, var, map)
+	if value.kind == "ExprLocal" then
+		return value["local"] == var
+	end
+	if value.kind == "ExprGroup" then
+		return ChainValueIsTable(value.expr, var, map)
+	end
+	if value.kind ~= "ExprIndexName" and value.kind ~= "ExprIndexExpr" then
+		return false
+	end
+	local base = ChainBaseExpr(value)
+	if base == nil or base["local"] ~= var then
+		return false
+	end
+	local chain = {}
+	local e = value
+	while e.kind == "ExprIndexName" or e.kind == "ExprIndexExpr" or e.kind == "ExprGroup" do
+		if e.kind == "ExprGroup" then
+			e = e.expr
+			continue
+		end
+		local k
+		if e.kind == "ExprIndexName" then
+			k = e.index
+		else
+			k = ConstExprKey(e.index)
+			if k == nil then
+				return false
+			end
+		end
+		table_insert(chain, { key = k })
+		e = e.expr
+	end
+	local m = map
+	for i = #chain, 1, -1 do
+		local entry = m and m[chain[i].key]
+		if entry == nil then
+			return false
+		end
+		if i == 1 then
+			return entry.sub ~= nil
+		end
+		m = entry.sub
+	end
+	return false
+end
+
+local function MarkTableKeyAliased(value)
+	local base = ChainBaseExpr(value)
+	if base == nil then
+		return
+	end
+	local var = base["local"]
+	if TableKeyMaps[var] and ChainValueIsTable(value, var, TableKeyMaps[var]) then
+		TableKeyEscaped[var] = true
+	end
+end
+
+local CollectTableKeyRefs
+
+local function CollectTableKeyRefsImpl(node, context)
+	if type(node) ~= "table" or node.kind == nil then
+		return
+	end
+
+	if node.kind == "ExprLocal" then
+		local var = node["local"]
+		if var and TableKeyCandidates[var] then
+			if context == "escape" then
+				TableKeyEscaped[var] = true
+			elseif context == "target" then
+				TableKeyMutated[var] = true
+			end
+		end
+		return
+	end
+
+	if (node.kind == "ExprIndexName" or node.kind == "ExprIndexExpr") and context == "escape" then
+		MarkTableKeyAliased(node)
+	end
+
+	if node.kind == "ExprIndexName" then
+		CollectTableKeyRefs(node.expr, "value")
+	elseif node.kind == "ExprIndexExpr" then
+		CollectTableKeyRefs(node.expr, "value")
+		CollectTableKeyRefs(node.index, "value")
+	elseif node.kind == "ExprCall" then
+		if node.self then
+			local base = ChainBaseExpr(node.func)
+			if base and TableKeyCandidates[base["local"]] then
+				TableKeyEscaped[base["local"]] = true
+			end
+			CollectTableKeyRefs(node.func, "value")
+		else
+			CollectTableKeyRefs(node.func, "escape")
+		end
+		for _, arg in node.args do
+			CollectTableKeyRefs(arg, "escape")
+		end
+	elseif node.kind == "ExprFunction" then
+		if node.body then
+			CollectTableKeyRefs(node.body, "value")
+		end
+	elseif node.kind == "ExprTable" then
+		for _, item in node.items do
+			if item.kind == "List" then
+				MarkTableKeyAliased(item.value)
+				CollectTableKeyRefs(item.value, "value")
+			elseif item.kind == "Record" then
+				MarkTableKeyAliased(item.value)
+				CollectTableKeyRefs(item.value, "value")
+			elseif item.kind == "General" then
+				if item.key then
+					CollectTableKeyRefs(item.key, "escape")
+				end
+				MarkTableKeyAliased(item.value)
+				CollectTableKeyRefs(item.value, "value")
+			end
+		end
+	elseif node.kind == "ExprUnary" then
+		CollectTableKeyRefs(node.expr, "value")
+	elseif node.kind == "ExprBinary" then
+		CollectTableKeyRefs(node.left, "value")
+		CollectTableKeyRefs(node.right, "value")
+	elseif node.kind == "ExprTypeAssertion" then
+		CollectTableKeyRefs(node.expr, "value")
+	elseif node.kind == "ExprIfElse" then
+		CollectTableKeyRefs(node.condition, "value")
+		CollectTableKeyRefs(node.trueExpr, "value")
+		CollectTableKeyRefs(node.falseExpr, "value")
+	elseif node.kind == "ExprInterpString" then
+		for _, expr in node.expressions do
+			CollectTableKeyRefs(expr, "value")
+		end
+	elseif node.kind == "ExprGroup" then
+		CollectTableKeyRefs(node.expr, context)
+	elseif node.kind == "ExprInstantiate" then
+		CollectTableKeyRefs(node.expr, "value")
+	elseif node.kind == "StatBlock" then
+		for _, stat in node.body do
+			CollectTableKeyRefs(stat, "value")
+		end
+	elseif node.kind == "StatIf" then
+		CollectTableKeyRefs(node.condition, "value")
+		CollectTableKeyRefs(node.thenbody, "value")
+		if node.elsebody then
+			CollectTableKeyRefs(node.elsebody, "value")
+		end
+	elseif node.kind == "StatWhile" then
+		CollectTableKeyRefs(node.condition, "value")
+		CollectTableKeyRefs(node.body, "value")
+	elseif node.kind == "StatRepeat" then
+		CollectTableKeyRefs(node.body, "value")
+		CollectTableKeyRefs(node.condition, "value")
+	elseif node.kind == "StatFor" then
+		CollectTableKeyRefs(node.from, "value")
+		CollectTableKeyRefs(node.to, "value")
+		if node.step then
+			CollectTableKeyRefs(node.step, "value")
+		end
+		CollectTableKeyRefs(node.body, "value")
+	elseif node.kind == "StatForIn" then
+		for _, value in node.values do
+			CollectTableKeyRefs(value, "value")
+		end
+		CollectTableKeyRefs(node.body, "value")
+	elseif node.kind == "StatLocal" then
+		for i, var in node.vars do
+			local value = node.values[i]
+			if value and value.kind == "ExprTable" and not TableKeyCandidates[var] then
+				TableKeyCandidates[var] = value
+				TableKeyMaps[var] = BuildTableKeyMap(value)
+			end
+		end
+		for _, value in node.values do
+			CollectTableKeyRefs(value, "value")
+		end
+		for _, value in node.values do
+			MarkTableKeyAliased(value)
+		end
+	elseif node.kind == "StatAssign" then
+		local allLocal = true
+		for _, target in node.vars do
+			if target.kind ~= "ExprLocal" then
+				allLocal = false
+				break
+			end
+		end
+		for _, target in node.vars do
+			if target.kind == "ExprLocal" then
+				CollectTableKeyRefs(target, "target")
+			else
+				CollectTableKeyRefs(target, "value")
+			end
+		end
+		local valueContext = allLocal and "value" or "escape"
+		for _, value in node.values do
+			CollectTableKeyRefs(value, valueContext)
+		end
+		if allLocal then
+			for _, value in node.values do
+				MarkTableKeyAliased(value)
+			end
+		end
+	elseif node.kind == "StatCompoundAssign" then
+		CollectTableKeyRefs(node.var, "value")
+		CollectTableKeyRefs(node.value, "value")
+	elseif node.kind == "StatReturn" then
+		for _, value in node.list do
+			CollectTableKeyRefs(value, "escape")
+		end
+	elseif node.kind == "StatExpr" then
+		CollectTableKeyRefs(node.expr, "value")
+	elseif node.kind == "StatFunction" then
+		CollectTableKeyRefs(node.name, "value")
+		CollectTableKeyRefs(node.func, "value")
+	elseif node.kind == "StatLocalFunction" then
+		CollectTableKeyRefs(node.func, "value")
+	end
+end
+
+CollectTableKeyRefs = CollectTableKeyRefsImpl
+
+local function RewriteTableLiteralKeys(tableNode, map)
+	for _, item in tableNode.items do
+		if item.kind == "Record" then
+			local entry = map[item.key.value]
+			if entry then
+				item.key.value = entry.name
+				if entry.sub and item.value and item.value.kind == "ExprTable" then
+					RewriteTableLiteralKeys(item.value, entry.sub)
+				end
+			end
+		elseif item.kind == "General" and item.key then
+			local k = ConstExprKey(item.key)
+			if k ~= nil then
+				local entry = map[k]
+				if entry then
+					item.key = {
+						kind = "ExprConstantString",
+						location = item.key.location,
+						value = entry.name,
+					}
+					if entry.sub and item.value and item.value.kind == "ExprTable" then
+						RewriteTableLiteralKeys(item.value, entry.sub)
+					end
+				end
+			end
+		end
+	end
+end
+
+local function RewriteChain(node, var, map)
+	if node.kind == "ExprLocal" then
+		if node["local"] == var then
+			return map
+		end
+		return nil
+	end
+	if node.kind == "ExprGroup" then
+		return RewriteChain(node.expr, var, map)
+	end
+	if node.kind == "ExprIndexName" or node.kind == "ExprIndexExpr" then
+		local sub = RewriteChain(node.expr, var, map)
+		if sub == nil then
+			return nil
+		end
+		local k
+		if node.kind == "ExprIndexName" then
+			k = node.index
+		else
+			k = ConstExprKey(node.index)
+			if k == nil then
+				return nil
+			end
+		end
+		local entry = sub[k]
+		if entry == nil then
+			return nil
+		end
+		if node.kind == "ExprIndexName" then
+			node.index = entry.name
+		else
+			node.index = {
+				kind = "ExprConstantString",
+				location = node.index.location,
+				value = entry.name,
+			}
+		end
+		return entry.sub
+	end
+	return nil
+end
+
+local function RewriteTableKeyPass(node)
+	if type(node) ~= "table" or node.kind == nil then
+		return
+	end
+	if node.kind == "ExprLocal" then
+		return
+	elseif node.kind == "ExprIndexName" then
+		local base = ChainBaseExpr(node)
+		if base and TableKeyMaps[base["local"]] then
+			RewriteChain(node, base["local"], TableKeyMaps[base["local"]])
+		end
+		RewriteTableKeyPass(node.expr)
+	elseif node.kind == "ExprIndexExpr" then
+		local base = ChainBaseExpr(node)
+		if base and TableKeyMaps[base["local"]] then
+			RewriteChain(node, base["local"], TableKeyMaps[base["local"]])
+		end
+		RewriteTableKeyPass(node.expr)
+		RewriteTableKeyPass(node.index)
+	elseif node.kind == "ExprCall" then
+		RewriteTableKeyPass(node.func)
+		for _, arg in node.args do
+			RewriteTableKeyPass(arg)
+		end
+	elseif node.kind == "ExprFunction" then
+		if node.body then
+			RewriteTableKeyPass(node.body)
+		end
+	elseif node.kind == "ExprTable" then
+		for _, item in node.items do
+			if item.kind == "List" then
+				RewriteTableKeyPass(item.value)
+			elseif item.kind == "Record" then
+				RewriteTableKeyPass(item.value)
+			elseif item.kind == "General" then
+				if item.key then
+					RewriteTableKeyPass(item.key)
+				end
+				RewriteTableKeyPass(item.value)
+			end
+		end
+	elseif node.kind == "ExprUnary" then
+		RewriteTableKeyPass(node.expr)
+	elseif node.kind == "ExprBinary" then
+		RewriteTableKeyPass(node.left)
+		RewriteTableKeyPass(node.right)
+	elseif node.kind == "ExprTypeAssertion" then
+		RewriteTableKeyPass(node.expr)
+	elseif node.kind == "ExprIfElse" then
+		RewriteTableKeyPass(node.condition)
+		RewriteTableKeyPass(node.trueExpr)
+		RewriteTableKeyPass(node.falseExpr)
+	elseif node.kind == "ExprInterpString" then
+		for _, expr in node.expressions do
+			RewriteTableKeyPass(expr)
+		end
+	elseif node.kind == "ExprGroup" then
+		RewriteTableKeyPass(node.expr)
+	elseif node.kind == "ExprInstantiate" then
+		RewriteTableKeyPass(node.expr)
+	elseif node.kind == "StatBlock" then
+		for _, stat in node.body do
+			RewriteTableKeyPass(stat)
+		end
+	elseif node.kind == "StatIf" then
+		RewriteTableKeyPass(node.condition)
+		RewriteTableKeyPass(node.thenbody)
+		if node.elsebody then
+			RewriteTableKeyPass(node.elsebody)
+		end
+	elseif node.kind == "StatWhile" then
+		RewriteTableKeyPass(node.condition)
+		RewriteTableKeyPass(node.body)
+	elseif node.kind == "StatRepeat" then
+		RewriteTableKeyPass(node.body)
+		RewriteTableKeyPass(node.condition)
+	elseif node.kind == "StatFor" then
+		RewriteTableKeyPass(node.from)
+		RewriteTableKeyPass(node.to)
+		if node.step then
+			RewriteTableKeyPass(node.step)
+		end
+		RewriteTableKeyPass(node.body)
+	elseif node.kind == "StatForIn" then
+		for _, value in node.values do
+			RewriteTableKeyPass(value)
+		end
+		RewriteTableKeyPass(node.body)
+	elseif node.kind == "StatLocal" then
+		for i, var in node.vars do
+			local map = TableKeyMaps[var]
+			if map and node.values[i] and node.values[i].kind == "ExprTable" then
+				RewriteTableLiteralKeys(node.values[i], map)
+			end
+		end
+		for _, value in node.values do
+			RewriteTableKeyPass(value)
+		end
+	elseif node.kind == "StatAssign" then
+		for _, target in node.vars do
+			RewriteTableKeyPass(target)
+		end
+		for _, value in node.values do
+			RewriteTableKeyPass(value)
+		end
+	elseif node.kind == "StatCompoundAssign" then
+		RewriteTableKeyPass(node.var)
+		RewriteTableKeyPass(node.value)
+	elseif node.kind == "StatReturn" then
+		for _, value in node.list do
+			RewriteTableKeyPass(value)
+		end
+	elseif node.kind == "StatExpr" then
+		RewriteTableKeyPass(node.expr)
+	elseif node.kind == "StatFunction" then
+		RewriteTableKeyPass(node.name)
+		RewriteTableKeyPass(node.func)
+	elseif node.kind == "StatLocalFunction" then
+		RewriteTableKeyPass(node.func)
+	end
+end
+
+local function TransformTableKeys(ast)
+	TableKeyCandidates = {}
+	TableKeyMutated = {}
+	TableKeyEscaped = {}
+	TableKeyMaps = {}
+
+	CollectTableKeyRefs(ast, "value")
+
+	for var in pairs(TableKeyCandidates) do
+		if TableKeyMutated[var] or TableKeyEscaped[var] then
+			TableKeyMaps[var] = nil
+		end
+	end
+
+	RewriteTableKeyPass(ast)
+end
+
 function Transformer.Transform(ast)
 	VariableMap = {}
-	VariableCounter = 0
-	UsedNames = {}
+	NameGenerator:Reset()
 
 	if Transformer.Options.Rules.DeadCodeElimination then
 		DCEFoldBlock(ast, {})
@@ -2214,7 +2665,7 @@ function Transformer.Transform(ast)
 		end
 
 		for name in pairs(globals) do
-			UsedNames[name] = true
+			NameGenerator:Reserve(name)
 		end
 	end
 
@@ -2241,10 +2692,10 @@ function Transformer.Transform(ast)
 			local trueName = "luaia_bool_true"
 			local falseName = "luaia_bool_false"
 			if trueCount > 0 then
-				VariableMap[trueName] = GenerateName()
+				VariableMap[trueName] = NameGenerator:Generate()
 			end
 			if falseCount > 0 then
-				VariableMap[falseName] = GenerateName()
+				VariableMap[falseName] = NameGenerator:Generate()
 			end
 
 			WalkBooleanUses(ast, counts, true, trueName, falseName, returnsOnly)
@@ -2290,6 +2741,10 @@ function Transformer.Transform(ast)
 		LocalizeBools(ast, false)
 	else
 		LocalizeBools(ast, true)
+	end
+
+	if Transformer.Options.Rules.RenameTableKeys then
+		TransformTableKeys(ast)
 	end
 
 	ast = TransformStatementBlock(ast)

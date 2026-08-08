@@ -1,1 +1,1 @@
-local a=print;a("a is false");
+local b=print;local e={z={r=32,["y"]=12},w={["j"]="a2",["a"]="a1"},l=true};if e.l then b(e.z.r+32);end;
