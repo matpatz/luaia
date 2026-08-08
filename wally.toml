@@ -1,6 +1,6 @@
 [package]
 name = "matpatz/luaia"
-version = "0.3.0"
+version = "0.4.0"
 description = "Luau Minifer written in Luau"
 license = "GPL-3.0"
 registry = "https://github.com/UpliftGames/wally-index"

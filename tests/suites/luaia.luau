@@ -474,6 +474,69 @@ end
 			check.equal(errors, nil)
 			check.not_nil(string.find(result, "sub1", 1, true))
 		end)
+
+		test.case("should skip keys of tables accessed with dynamic indices", function()
+			local source = [[
+local t = { a = 1 }
+local function get(k)
+	return t[k]
+end
+print(get("a"))
+]]
+			local result, errors = luaia.Minify(source, { Rules = { RenameTableKeys = true, LocalizeGlobals = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "a=1", 1, true))
+		end)
+
+		test.case("should skip keys of sub-tables accessed with dynamic indices", function()
+			local source = [[
+local tq = { t = { ["a"] = { Code = 1 } } }
+local function get(id)
+	return tq.t[id].Code
+end
+print(get("a"))
+]]
+			local result, errors = luaia.Minify(source, { Rules = { RenameTableKeys = true, LocalizeGlobals = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, '["a"]', 1, true))
+		end)
+
+		test.case("should rename shared fields of dynamically-dispatched tables", function()
+			local source = [[
+local registry = { v = {
+	[0] = { Code = 1, NumLocals = 2 },
+	[1] = { Code = 3, NumLocals = 4 },
+	[key()] = { Code = 5, NumLocals = 6 },
+} }
+local function get(id)
+	local jx = { v = registry.v[id] }
+	return jx.v.Code + jx.v.NumLocals
+end
+print(get(0))
+print(get(1))
+]]
+			local result, errors = luaia.Minify(source, { Rules = { RenameTableKeys = true, LocalizeGlobals = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "Code", 1, true), nil)
+			check.equal(string.find(result, "NumLocals", 1, true), nil)
+		end)
+
+		test.case("should rename shared fields of root dynamically-dispatched tables", function()
+			local source = [[
+local t = { a = { Code = 1 }, b = { Code = 2 } }
+local function get(k)
+	return t[k].Code
+end
+print(get("a"), get("b"))
+]]
+			local result, errors = luaia.Minify(source, { Rules = { RenameTableKeys = true, LocalizeGlobals = false } })
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, "Code", 1, true), nil)
+		end)
 	end)
 
 	test.suite("edge cases", function()

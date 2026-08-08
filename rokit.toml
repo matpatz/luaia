@@ -4,5 +4,5 @@
 # New tools can be added by running `rokit add <tool>` in a terminal.
 
 [tools]
-luaia = "matpatz/luaia@0.3.0"
+luaia = "matpatz/luaia@0.4.0"
 lune = "lune-org/lune@0.10.5"

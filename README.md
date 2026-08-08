@@ -10,7 +10,7 @@ luaia is published as a [Rokit](https://github.com/rojo-rbx/rokit) tool. Add it 
 
 ```toml
 [tools]
-luaia = "matpatz/luaia@0.3.0"
+luaia = "matpatz/luaia@0.4.0"
 ```
 
 Then run `rokit install` and use it as a standalone `luaia` command:
@@ -28,7 +28,7 @@ Prebuilt binaries for every platform are attached to each [release](https://gith
 
 **Windows**
 
-1. Grab `luaia-0.3.0-windows-x86_64.zip` (or `luaia-0.3.0-windows-aarch64.zip` on ARM64).
+1. Grab `luaia-0.4.0-windows-x86_64.zip` (or `luaia-0.4.0-windows-aarch64.zip` on ARM64).
 2. Unzip it — you'll get `luaia.exe`.
 3. Run it from a terminal:
 
@@ -267,7 +267,8 @@ A table is left untouched whenever its fields could be observed from code luaia 
 - the table is returned (`return a` in a module),
 - the table is stored into a global or environment field (`_G.a = a`, `shared.a = a`, `getfenv().a = a`, `getgenv().a = a`, or any `x.y = a`),
 - the table (or one of its sub-tables) is aliased to another local,
-- the table is embedded in another table, passed to a call, used as a method receiver, or used as a table key.
+- the table is embedded in another table, passed to a call, used as a method receiver, or used as a table key,
+- the table (or one of its sub-tables) is read with a dynamic index (`a[k]`, `a.sub[k]`) — the key can't be rewritten, so it must keep its original name. Its own keys stay untouched, but the tables stored inside it are still renamed via a shared "family" map when they all use the same field names (the classic `registry[id]` dispatch pattern), so fields like `registry[id].Code` rename safely.
 
 Side-effectful initializers are preserved (e.g. `local x = print("hi")`), and a branch is only removed when its condition is a known constant, so behavior never changes.
 

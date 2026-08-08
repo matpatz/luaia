@@ -56,7 +56,7 @@ local i = 1
 while i <= #args do
 	local arg = args[i]
 	if arg == "--version" then
-		print("luaia v0.3.0")
+		print("luaia v0.4.0")
 		process.exit(0)
 	elseif arg == "--help" then
 		print("luaia - Luau minifier")

@@ -2454,6 +2454,115 @@ local TableKeyCandidates: { any } = {}
 local TableKeyMutated: { any } = {}
 local TableKeyEscaped: { any } = {}
 local TableKeyMaps: { any } = {}
+local TableKeyFamily: { any } = {}
+
+-- Resolves a chain expression (the base of an index) down to the map of the
+-- table that a dynamic key would read. Returns the root local and the map; the
+-- map is the root map when the dynamic key indexes the root table directly.
+local function ResolveChainMap(chainExpr)
+	local base = ChainBaseExpr(chainExpr)
+	if base == nil then
+		return nil, nil
+	end
+	local var = base["local"]
+	local map = TableKeyMaps[var]
+	if map == nil then
+		return nil, nil
+	end
+	local m = map
+	local e = chainExpr
+	while e ~= nil and e ~= base do
+		if e.kind == "ExprGroup" then
+			e = e.expr
+		elseif e.kind == "ExprIndexName" then
+			local entry = m and m[e.index]
+			if entry == nil then
+				return var, nil
+			end
+			m = entry.sub
+			e = e.expr
+		elseif e.kind == "ExprIndexExpr" then
+			local k = ConstExprKey(e.index)
+			if k == nil then
+				return var, m
+			end
+			local entry = m and m[k]
+			if entry == nil then
+				return var, nil
+			end
+			m = entry.sub
+			e = e.expr
+		else
+			break
+		end
+	end
+	return var, m
+end
+
+-- When a table is reached through a dynamic index (b[k], b.sub[k]), its own
+-- keys can't be rewritten so they keep their names. But the tables stored in
+-- it are still renameable if every one of them renames a field the same way:
+-- a "family map" merges the sub-maps of every entry so shared fields map to a
+-- single generated name. All the family's literals and every access through
+-- the dynamic dispatch are rewritten with that one map.
+local function BuildFamilyMap(m)
+	if TableKeyFamily[m] then
+		return TableKeyFamily[m]
+	end
+	local subs = {}
+	for _, entry in pairs(m) do
+		if entry.sub then
+			subs[#subs + 1] = entry.sub
+		end
+	end
+	local family = {}
+	for _, sub in subs do
+		for field in pairs(sub) do
+			if not family[field] then
+				family[field] = { name = NameGenerator:Generate() }
+			end
+		end
+	end
+	for _, entry in pairs(m) do
+		if entry.sub then
+			entry.sub = family
+		end
+	end
+	TableKeyFamily[m] = family
+	return family
+end
+
+local function MarkFamilyIndexed(chainExpr)
+	local var, m = ResolveChainMap(chainExpr)
+	if var == nil then
+		return
+	end
+	if m == nil then
+		-- Unresolvable chain: be conservative and skip the root table entirely.
+		TableKeyEscaped[var] = true
+	elseif m == TableKeyMaps[var] then
+		-- Root table indexed dynamically: keys stay, stored tables family-rename.
+		BuildFamilyMap(m)
+	else
+		BuildFamilyMap(m)
+	end
+end
+
+-- If `value` is a dynamic read out of a family-indexed table (like `bq.v[id]`),
+-- returns the family map its result uses, so aliases (`local x = {v = bq.v[id]}`)
+-- can keep rewriting field accesses on the aliased table.
+local function ResolveFamily(value)
+	while value ~= nil and value.kind == "ExprGroup" do
+		value = value.expr
+	end
+	if value ~= nil and value.kind == "ExprIndexExpr" and ConstExprKey(value.index) == nil then
+		local _, m = ResolveChainMap(value.expr)
+		if m and TableKeyFamily[m] then
+			return TableKeyFamily[m]
+		end
+	end
+	return nil
+end
 
 local function BuildTableKeyMap(tableNode)
 	local map = {}
@@ -2565,6 +2674,9 @@ local function CollectTableKeyRefsImpl(node, context)
 	if node.kind == "ExprIndexName" then
 		CollectTableKeyRefs(node.expr, "value")
 	elseif node.kind == "ExprIndexExpr" then
+		if ConstExprKey(node.index) == nil then
+			MarkFamilyIndexed(node.expr)
+		end
 		CollectTableKeyRefs(node.expr, "value")
 		CollectTableKeyRefs(node.index, "value")
 	elseif node.kind == "ExprCall" then
@@ -2661,6 +2773,38 @@ local function CollectTableKeyRefsImpl(node, context)
 		for _, value in node.values do
 			MarkTableKeyAliased(value)
 		end
+		for i, var in node.vars do
+			local value = node.values[i]
+			if value == nil then
+				continue
+			end
+			if value.kind == "ExprTable" and TableKeyMaps[var] then
+				for _, item in value.items do
+					local key
+					if item.kind == "Record" then
+						key = item.key.value
+					elseif item.kind == "General" and item.key then
+						key = ConstExprKey(item.key)
+					else
+						continue
+					end
+					if key ~= nil then
+						local entry = TableKeyMaps[var][key]
+						local family = entry and ResolveFamily(item.value)
+						if family then
+							entry.sub = family
+						end
+					end
+				end
+			else
+				local family = ResolveFamily(value)
+				if family and not TableKeyCandidates[var] then
+					-- a local directly holding a table from the family
+					TableKeyCandidates[var] = value
+					TableKeyMaps[var] = family
+				end
+			end
+		end
 	elseif node.kind == "StatAssign" then
 		local allLocal = true
 		for _, target in node.vars do
@@ -2705,29 +2849,40 @@ end
 CollectTableKeyRefs = CollectTableKeyRefsImpl
 
 local function RewriteTableLiteralKeys(tableNode, map)
+	local family = TableKeyFamily[map]
 	for _, item in tableNode.items do
-		if item.kind == "Record" then
+		if item.kind == "List" then
+			if family and item.value and item.value.kind == "ExprTable" then
+				RewriteTableLiteralKeys(item.value, family)
+			end
+		elseif item.kind == "Record" then
 			local entry = map[item.key.value]
 			if entry then
-				item.key.value = entry.name
+				if not family then
+					item.key.value = entry.name
+				end
 				if entry.sub and item.value and item.value.kind == "ExprTable" then
 					RewriteTableLiteralKeys(item.value, entry.sub)
 				end
 			end
 		elseif item.kind == "General" and item.key then
 			local k = ConstExprKey(item.key)
-			if k ~= nil then
-				local entry = map[k]
-				if entry then
+			local entry = k ~= nil and map[k]
+			if entry then
+				if not family then
 					item.key = {
 						kind = "ExprConstantString",
 						location = item.key.location,
 						value = entry.name,
 					}
-					if entry.sub and item.value and item.value.kind == "ExprTable" then
-						RewriteTableLiteralKeys(item.value, entry.sub)
-					end
 				end
+				if entry.sub and item.value and item.value.kind == "ExprTable" then
+					RewriteTableLiteralKeys(item.value, entry.sub)
+				end
+			elseif family and item.value and item.value.kind == "ExprTable" then
+				-- a family member under a key we can't map (e.g. a dynamic key):
+				-- its fields are still renamed with the shared family map
+				RewriteTableLiteralKeys(item.value, family)
 			end
 		end
 	end
@@ -2754,21 +2909,24 @@ local function RewriteChain(node, var, map)
 		else
 			k = ConstExprKey(node.index)
 			if k == nil then
-				return nil
+				-- dynamic key: fields of the table it resolves to are family-renamed
+				return TableKeyFamily[sub]
 			end
 		end
 		local entry = sub[k]
 		if entry == nil then
 			return nil
 		end
-		if node.kind == "ExprIndexName" then
-			node.index = entry.name
-		else
-			node.index = {
-				kind = "ExprConstantString",
-				location = node.index.location,
-				value = entry.name,
-			}
+		if not TableKeyFamily[sub] then
+			if node.kind == "ExprIndexName" then
+				node.index = entry.name
+			else
+				node.index = {
+					kind = "ExprConstantString",
+					location = node.index.location,
+					value = entry.name,
+				}
+			end
 		end
 		return entry.sub
 	end
@@ -2902,6 +3060,7 @@ local function TransformTableKeys(ast)
 	TableKeyMutated = {}
 	TableKeyEscaped = {}
 	TableKeyMaps = {}
+	TableKeyFamily = {}
 
 	CollectTableKeyRefs(ast, "value")
 
