@@ -1,12 +1,14 @@
 local Parser = require("@self/Parser")
 local Transformer = require("@self/Transformer")
 local Generator = require("@self/Generator")
+local VariablePacker = require("@self/VariablePacker")
 
 local luaia = {}
 
 luaia.Parser = Parser
 luaia.Transformer = Transformer
 luaia.Generator = Generator
+luaia.VariablePacker = VariablePacker
 
 local DefaultRules = {
 	MinifyVariables = true,
@@ -14,12 +16,13 @@ local DefaultRules = {
 	RemoveRedundantParens = true,
 	LocalizeGlobals = true,
 	LocalizeBooleans = true,
+	LocalizeStrings = true,
 	DeadCodeElimination = true,
 	RenameTableKeys = false,
 	TableConstantFolding = false,
 }
 
-function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boolean?, ConstantFold: boolean?, RemoveRedundantParens: boolean?, LocalizeGlobals: boolean?, LocalizeBooleans: boolean?, DeadCodeElimination: boolean?, RenameTableKeys: boolean?, TableConstantFolding: boolean? }? }?): (string?, { string }?)
+function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boolean?, ConstantFold: boolean?, RemoveRedundantParens: boolean?, LocalizeGlobals: boolean?, LocalizeBooleans: boolean?, LocalizeStrings: boolean?, DeadCodeElimination: boolean?, RenameTableKeys: boolean?, TableConstantFolding: boolean? }? }?): (string?, { string }?)
 	Transformer.Options.Rules = table.clone(DefaultRules)
 
 	if Options then
@@ -38,6 +41,9 @@ function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boole
 			end
 			if Options.Rules.LocalizeBooleans ~= nil then
 				Transformer.Options.Rules.LocalizeBooleans = Options.Rules.LocalizeBooleans
+			end
+			if Options.Rules.LocalizeStrings ~= nil then
+				Transformer.Options.Rules.LocalizeStrings = Options.Rules.LocalizeStrings
 			end
 			if Options.Rules.DeadCodeElimination ~= nil then
 				Transformer.Options.Rules.DeadCodeElimination = Options.Rules.DeadCodeElimination
@@ -60,6 +66,15 @@ function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boole
 	local Result = Generator.Generate(Optimized)
 
 	return Result, nil
+end
+
+function luaia.PackVariables(Source: string): (string?, { string }?)
+	local AST, Errors = Parser.Parse(Source)
+	if not AST then
+		return nil, Errors
+	end
+
+	return Generator.Generate(VariablePacker.Transform(AST)), nil
 end
 
 return luaia

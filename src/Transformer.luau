@@ -16,6 +16,7 @@ Transformer.Options = {
 		RemoveRedundantParens = true,
 		LocalizeGlobals = true,
 		LocalizeBooleans = true,
+		LocalizeStrings = true,
 		DeadCodeElimination = true,
 		RenameTableKeys = false,
 		TableConstantFolding = false,
@@ -519,6 +520,136 @@ local function WalkBooleanUses(node, counts, rewrite, trueName, falseName, retur
 		node.func = WalkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
 	elseif node.kind == "StatLocalFunction" then
 		node.func = WalkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
+	end
+
+	return node
+end
+
+local function WalkStringUses(node, counts, rewrite, names)
+	if type(node) ~= "table" or node.kind == nil then
+		return node
+	end
+
+	if node.kind == "ExprConstantString" then
+		if rewrite and names[node.value] then
+			local name = names[node.value]
+			return {
+				kind = "ExprLocal",
+				location = node.location,
+				["local"] = {
+					name = name,
+					location = node.location,
+					functionDepth = 0,
+					loopDepth = 0,
+					isConst = false,
+					isExported = false,
+				},
+				upvalue = false,
+			}
+		elseif not rewrite then
+			counts[node.value] = (counts[node.value] or 0) + 1
+		end
+	end
+
+	if node.kind == "ExprIndexName" then
+		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
+	elseif node.kind == "ExprIndexExpr" then
+		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
+		node.index = WalkStringUses(node.index, counts, rewrite, names)
+	elseif node.kind == "ExprCall" then
+		node.func = WalkStringUses(node.func, counts, rewrite, names)
+		for i, arg in node.args do
+			node.args[i] = WalkStringUses(arg, counts, rewrite, names)
+		end
+	elseif node.kind == "ExprFunction" then
+		if node.body then
+			node.body = WalkStringUses(node.body, counts, rewrite, names)
+		end
+	elseif node.kind == "ExprTable" then
+		for _, item in node.items do
+			if item.kind == "List" then
+				item.value = WalkStringUses(item.value, counts, rewrite, names)
+			elseif item.kind == "Record" then
+				item.value = WalkStringUses(item.value, counts, rewrite, names)
+			elseif item.kind == "General" then
+				if item.key then
+					item.key = WalkStringUses(item.key, counts, rewrite, names)
+				end
+				item.value = WalkStringUses(item.value, counts, rewrite, names)
+			end
+		end
+	elseif node.kind == "ExprUnary" then
+		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
+	elseif node.kind == "ExprBinary" then
+		node.left = WalkStringUses(node.left, counts, rewrite, names)
+		node.right = WalkStringUses(node.right, counts, rewrite, names)
+	elseif node.kind == "ExprTypeAssertion" then
+		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
+	elseif node.kind == "ExprIfElse" then
+		node.condition = WalkStringUses(node.condition, counts, rewrite, names)
+		node.trueExpr = WalkStringUses(node.trueExpr, counts, rewrite, names)
+		node.falseExpr = WalkStringUses(node.falseExpr, counts, rewrite, names)
+	elseif node.kind == "ExprInterpString" then
+		for i, expr in node.expressions do
+			node.expressions[i] = WalkStringUses(expr, counts, rewrite, names)
+		end
+	elseif node.kind == "ExprGroup" then
+		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
+	elseif node.kind == "ExprInstantiate" then
+		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
+	elseif node.kind == "StatBlock" then
+		for i, stat in node.body do
+			node.body[i] = WalkStringUses(stat, counts, rewrite, names)
+		end
+	elseif node.kind == "StatIf" then
+		node.condition = WalkStringUses(node.condition, counts, rewrite, names)
+		node.thenbody = WalkStringUses(node.thenbody, counts, rewrite, names)
+		if node.elsebody then
+			node.elsebody = WalkStringUses(node.elsebody, counts, rewrite, names)
+		end
+	elseif node.kind == "StatWhile" then
+		node.condition = WalkStringUses(node.condition, counts, rewrite, names)
+		node.body = WalkStringUses(node.body, counts, rewrite, names)
+	elseif node.kind == "StatRepeat" then
+		node.body = WalkStringUses(node.body, counts, rewrite, names)
+		node.condition = WalkStringUses(node.condition, counts, rewrite, names)
+	elseif node.kind == "StatFor" then
+		node.from = WalkStringUses(node.from, counts, rewrite, names)
+		node.to = WalkStringUses(node.to, counts, rewrite, names)
+		if node.step then
+			node.step = WalkStringUses(node.step, counts, rewrite, names)
+		end
+		node.body = WalkStringUses(node.body, counts, rewrite, names)
+	elseif node.kind == "StatForIn" then
+		for i, value in node.values do
+			node.values[i] = WalkStringUses(value, counts, rewrite, names)
+		end
+		node.body = WalkStringUses(node.body, counts, rewrite, names)
+	elseif node.kind == "StatLocal" then
+		for i, value in node.values do
+			node.values[i] = WalkStringUses(value, counts, rewrite, names)
+		end
+	elseif node.kind == "StatAssign" then
+		for i, target in node.vars do
+			node.vars[i] = WalkStringUses(target, counts, rewrite, names)
+		end
+		for i, value in node.values do
+			node.values[i] = WalkStringUses(value, counts, rewrite, names)
+		end
+	elseif node.kind == "StatCompoundAssign" then
+		node.var = WalkStringUses(node.var, counts, rewrite, names)
+		node.value = WalkStringUses(node.value, counts, rewrite, names)
+	elseif node.kind == "StatReturn" then
+		for i, value in node.list do
+			node.list[i] = WalkStringUses(value, counts, rewrite, names)
+		end
+	elseif node.kind == "StatExpr" then
+		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
+	elseif node.kind == "StatFunction" then
+		node.name = WalkStringUses(node.name, counts, rewrite, names)
+		node.func = WalkStringUses(node.func, counts, rewrite, names)
+	elseif node.kind == "StatLocalFunction" then
+		node.func = WalkStringUses(node.func, counts, rewrite, names)
 	end
 
 	return node
@@ -3196,10 +3327,65 @@ function Transformer.Transform(ast)
 		end
 	end
 
+	local function LocalizeStrings(ast)
+		local counts = {}
+		WalkStringUses(ast, counts, false, nil)
+
+		local values = {}
+		for value, count in pairs(counts) do
+			if count > 3 then
+				table_insert(values, value)
+			end
+		end
+		if #values == 0 then
+			return
+		end
+		table_sort(values)
+
+		local names = {}
+		local vars = {}
+		local localValues = {}
+		local loc = { begin = { x = 0, y = 0 }, end_ = { x = 0, y = 0 } }
+		for i, value in values do
+			local localName = "luaia_string_" .. i
+			names[value] = localName
+			VariableMap[localName] = NameGenerator:Generate()
+			table_insert(vars, {
+				name = localName,
+				location = loc,
+				functionDepth = 0,
+				loopDepth = 0,
+				isConst = false,
+				isExported = false,
+			})
+			table_insert(localValues, {
+				kind = "ExprConstantString",
+				location = loc,
+				value = value,
+				quoteStyle = 0,
+			})
+		end
+
+		WalkStringUses(ast, counts, true, names)
+		table_insert(ast.body, 1, {
+			kind = "StatLocal",
+			location = loc,
+			vars = vars,
+			values = localValues,
+			isConst = false,
+			isExported = false,
+			equalsSignLocation = {},
+		})
+	end
+
 	if Transformer.Options.Rules.LocalizeBooleans then
 		LocalizeBools(ast, false)
 	else
 		LocalizeBools(ast, true)
+	end
+
+	if Transformer.Options.Rules.LocalizeStrings then
+		LocalizeStrings(ast)
 	end
 
 	if Transformer.Options.Rules.RenameTableKeys then

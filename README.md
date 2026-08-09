@@ -79,6 +79,7 @@ luaia <file> -r               Minify and run output
 luaia <file> -o <out> -r      Write to file and run it
 luaia -s <source>             Minify raw source
 luaia --stdin                 Read from stdin
+luaia --pack-locals -s <src>  Pack locals into tables
 ```
 
 On Windows the binary is `luaia.exe`. Running from source is identical — just replace `luaia` with `lune run bin/cli.lua`.
@@ -95,9 +96,11 @@ On Windows the binary is `luaia.exe`. Running from source is identical — just 
 | `--no-rename` | Disable variable renaming |
 | `--no-localize` | Disable global function localization |
 | `--no-bools` | Disable boolean literal localization |
+| `--no-strings` | Disable repeated string localization |
 | `--no-dce` | Disable dead code elimination |
 | `--table-keys` | Enable table field renaming (off by default) |
 | `--table-fold` | Enable table constant folding (off by default) |
+| `--pack-locals` | Store locals in tables to bypass Luau's local limit |
 | `--version` | Show version |
 | `--help` | Show help |
 
@@ -134,6 +137,7 @@ local result, errors = luaia.Minify(source, {
         ConstantFold = true,     -- fold constants (default: true)
         LocalizeGlobals = true,  -- hoist global functions into locals (default: true)
         LocalizeBooleans = true, -- hoist true/false literals into locals (default: true)
+        LocalizeStrings = true, -- hoist repeated string literals into locals (default: true)
         DeadCodeElimination = true, -- remove dead code (default: true)
         RenameTableKeys = false, -- rename table fields (default: false)
         TableConstantFolding = false, -- fold immutable table reads (default: false)
@@ -149,6 +153,22 @@ else
 end
 ```
 
+### PackVariables
+
+`PackVariables` is a separate lowering pass for scripts that exceed Luau's
+200-local-per-function limit. It replaces ordinary locals with fields in a
+private table for each function, preserving captured locals and parameters.
+Loop bodies get a fresh table per iteration so closures preserve their
+per-iteration locals. Loop control variables remain generated locals because
+Lua's loop and closure semantics require a distinct control variable.
+
+```lua
+local result, errors = luaia.PackVariables(source)
+```
+
+Use `--pack-locals` from the CLI. This mode is intentionally separate from
+`Minify`; it performs only the variable lowering pass.
+
 ## Rules
 
 Rules are individually toggleable optimizations. Most are on by default; pass `Rules = { <Rule> = false }` to disable a specific one, or `--no-<rule>` from the CLI. `RenameTableKeys` and `TableConstantFolding` are the exceptions — both are **off** by default and must be enabled with `Rules = { RenameTableKeys = true }` / `--table-keys`, or `Rules = { TableConstantFolding = true }` / `--table-fold`.
@@ -160,6 +180,7 @@ Rules are individually toggleable optimizations. Most are on by default; pass `R
 | `RemoveRedundantParens` | | Remove redundant parentheses |
 | `LocalizeGlobals` | `--no-localize` | Hoist global function references into local variables |
 | `LocalizeBooleans` | `--no-bools` | Replace repeated `true`/`false` literals with aliased locals |
+| `LocalizeStrings` | `--no-strings` | Replace string literals repeated more than three times with aliased locals |
 | `DeadCodeElimination` | `--no-dce` | Fold constant conditions, drop dead branches, and remove unused locals |
 | `RenameTableKeys` | `--table-keys` | Rename table fields to short names (off by default) |
 | `TableConstantFolding` | `--table-fold` | Fold reads of immutable table literals (off by default) |
@@ -313,6 +334,7 @@ src/
   init.luau          Public API
   Parser.luau        Wraps LuauParser with storeCstData = false
   Transformer.luau   AST optimizations (folding, renaming)
+  VariablePacker.luau Lowers locals into per-function tables
   Generator.luau     AST to minified string
   utils.luau         Shared helpers
   LuauParser/        Embedded parser (by vantoanvh)

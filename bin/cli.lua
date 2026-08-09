@@ -17,6 +17,7 @@ if #args == 0 then
 	print("  lune run bin/cli.lua <file> -o <out>  Minify and write to output file")
 	print("  lune run bin/cli.lua <file> -r        Minify and run output")
 	print("  lune run bin/cli.lua --stdin          Minify from stdin")
+	print("  lune run bin/cli.lua --pack-locals    Pack locals into tables")
 	print("")
 	print("Options:")
 	print("  -s <source>  Minify raw source (instead of a file)")
@@ -27,9 +28,11 @@ if #args == 0 then
 	print("  --no-rename  Disable variable renaming")
 	print("  --no-localize  Disable global function localization")
 	print("  --no-bools     Disable boolean literal localization")
+	print("  --no-strings   Disable repeated string localization")
 	print("  --no-dce       Disable dead code elimination")
 	print("  --table-keys   Enable table field renaming (off by default)")
 	print("  --table-fold   Enable table constant folding (off by default)")
+	print("  --pack-locals  Store locals in tables to bypass Luau's local limit")
 	print("  --version    Show version")
 	print("  --help       Show this help message")
 	process.exit(1)
@@ -47,9 +50,11 @@ local Options = {
 	RenameVariables = true,
 	LocalizeGlobals = true,
 	LocalizeBooleans = true,
+	LocalizeStrings = true,
 	DeadCodeElimination = true,
 	RenameTableKeys = false,
 	TableConstantFolding = false,
+	PackLocals = false,
 }
 
 local i = 1
@@ -67,6 +72,7 @@ while i <= #args do
 		print("  lune run bin/cli.lua <file> -o <out>  Minify and write to output file")
 		print("  lune run bin/cli.lua <file> -r        Minify and run output")
 		print("  lune run bin/cli.lua --stdin          Minify from stdin")
+		print("  lune run bin/cli.lua --pack-locals    Pack locals into tables")
 		print("")
 		print("Options:")
 		print("  -s <source>  Minify raw source (instead of a file)")
@@ -77,9 +83,11 @@ while i <= #args do
 		print("  --no-rename  Disable variable renaming")
 		print("  --no-localize  Disable global function localization")
 		print("  --no-bools     Disable boolean literal localization")
+		print("  --no-strings   Disable repeated string localization")
 		print("  --no-dce       Disable dead code elimination")
 		print("  --table-keys   Enable table field renaming (off by default)")
 		print("  --table-fold   Enable table constant folding (off by default)")
+		print("  --pack-locals  Store locals in tables to bypass Luau's local limit")
 		print("  --version    Show version")
 		print("  --help       Show this help message")
 		process.exit(0)
@@ -103,12 +111,16 @@ while i <= #args do
 		Options.LocalizeGlobals = false
 	elseif arg == "--no-bools" then
 		Options.LocalizeBooleans = false
+	elseif arg == "--no-strings" then
+		Options.LocalizeStrings = false
 	elseif arg == "--no-dce" then
 		Options.DeadCodeElimination = false
 	elseif arg == "--table-keys" then
 		Options.RenameTableKeys = true
 	elseif arg == "--table-fold" then
 		Options.TableConstantFolding = true
+	elseif arg == "--pack-locals" then
+		Options.PackLocals = true
 	elseif arg:sub(1, 1) ~= "-" then
 		Options.InputFile = arg
 	end
@@ -133,17 +145,23 @@ end
 
 local StartClock = os.clock()
 
-local Result, Errors = luaia.Minify(source, {
-	Rules = {
-		MinifyVariables = Options.RenameVariables,
-		ConstantFold = Options.ConstantFold,
-		LocalizeGlobals = Options.LocalizeGlobals,
-		LocalizeBooleans = Options.LocalizeBooleans,
-		DeadCodeElimination = Options.DeadCodeElimination,
-		RenameTableKeys = Options.RenameTableKeys,
-		TableConstantFolding = Options.TableConstantFolding,
-	},
-})
+local Result, Errors
+if Options.PackLocals then
+	Result, Errors = luaia.PackVariables(source)
+else
+	Result, Errors = luaia.Minify(source, {
+		Rules = {
+			MinifyVariables = Options.RenameVariables,
+			ConstantFold = Options.ConstantFold,
+			LocalizeGlobals = Options.LocalizeGlobals,
+			LocalizeBooleans = Options.LocalizeBooleans,
+			LocalizeStrings = Options.LocalizeStrings,
+			DeadCodeElimination = Options.DeadCodeElimination,
+			RenameTableKeys = Options.RenameTableKeys,
+			TableConstantFolding = Options.TableConstantFolding,
+		},
+	})
+end
 local ElapsedSeconds = os.clock() - StartClock
 
 if not Result then

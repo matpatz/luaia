@@ -203,6 +203,124 @@ end
 			check.equal(string.find(result, "return true", 1), nil)
 			check.equal(string.find(result, "return false", 1), nil)
 		end)
+
+		test.case("should localize strings repeated more than three times", function()
+			local source = [[
+print("function")
+print("function")
+print("function")
+print("function")
+]]
+			local result, errors = luaia.Minify(source, {
+				Rules = {
+					LocalizeGlobals = false,
+					LocalizeBooleans = false,
+					DeadCodeElimination = false,
+				},
+			})
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, 'local [a-z]+="function"', 1))
+			check.equal(string.find(result, 'print("function"', 1, true), nil)
+		end)
+
+		test.case("should not localize strings at the threshold", function()
+			local source = [[
+print("function")
+print("function")
+print("function")
+]]
+			local result, errors = luaia.Minify(source, {
+				Rules = {
+					LocalizeGlobals = false,
+					LocalizeBooleans = false,
+					DeadCodeElimination = false,
+				},
+			})
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, 'local [a-z]+="function"', 1), nil)
+		end)
+
+		test.case("should support disabling string localization", function()
+			local result, errors = luaia.Minify([[print("function", "function", "function", "function")]], {
+				Rules = {
+					LocalizeGlobals = false,
+					LocalizeBooleans = false,
+					LocalizeStrings = false,
+					DeadCodeElimination = false,
+				},
+			})
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.equal(string.find(result, 'local [a-z]+="function"', 1), nil)
+		end)
+	end)
+
+	test.suite("variable packing", function()
+		test.case("should expose PackVariables", function()
+			check.equal(type(luaia.PackVariables), "function")
+		end)
+
+		test.case("should preserve captured locals", function()
+			local source = [[
+local outer = 4
+local function make(value)
+	local inner = value + outer
+	return function(delta)
+		return inner + delta
+	end
+end
+local fn = make(3)
+return fn(2)
+]]
+			local result, errors = luaia.PackVariables(source)
+			check.not_nil(result)
+			check.equal(errors, nil)
+			check.not_nil(string.find(result, "local __luaia_vars", 1, true))
+			check.equal(string.find(result, "local outer", 1, true), nil)
+
+			local chunk = loadstring(result)
+			check.not_nil(chunk)
+			check.equal(chunk(), 9)
+		end)
+
+		test.case("should preserve loop behavior", function()
+			local result, errors = luaia.PackVariables([[local total = 0
+for i = 1, 3 do
+	total += i
+end
+return total]])
+			check.not_nil(result)
+			check.equal(errors, nil)
+
+			local chunk = loadstring(result)
+			check.not_nil(chunk)
+			check.equal(chunk(), 6)
+		end)
+
+		test.case("should give loop-created closures separate locals", function()
+			local source = [[
+local callbacks = {}
+for i = 1, 3 do
+	local value = i
+	table.insert(callbacks, function()
+		return value
+	end)
+end
+return callbacks[1](), callbacks[2](), callbacks[3]()
+]]
+			local result, errors = luaia.PackVariables(source)
+			check.not_nil(result)
+			check.equal(errors, nil)
+
+			local chunk = loadstring(result)
+			check.not_nil(chunk)
+			local first, second, third = chunk()
+			check.equal(first, 1)
+			check.equal(second, 2)
+			check.equal(third, 3)
+		end)
 	end)
 
 	test.suite("dead code elimination", function()
