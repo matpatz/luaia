@@ -15,3 +15,6 @@ type is SLIGHTY faster than typeof because it has less types to check
 we can optimize typeof to type for strings, numbers, booleans, tables, threads, and functions, but not for any userdata
 
 the Rule will do other stuff
+
+Add benchmark results to README
+remove the proj struct and other irrelevant info from README
