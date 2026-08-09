@@ -10,7 +10,7 @@ luaia is published as a [Rokit](https://github.com/rojo-rbx/rokit) tool. Add it 
 
 ```toml
 [tools]
-luaia = "matpatz/luaia@0.4.0"
+luaia = "matpatz/luaia@0.5.0"
 ```
 
 Then run `rokit install` and use it as a standalone `luaia` command:
@@ -28,7 +28,7 @@ Prebuilt binaries for every platform are attached to each [release](https://gith
 
 **Windows**
 
-1. Grab `luaia-0.4.0-windows-x86_64.zip` (or `luaia-0.4.0-windows-aarch64.zip` on ARM64).
+1. Grab `luaia-0.5.0-windows-x86_64.zip` (or `luaia-0.5.0-windows-aarch64.zip` on ARM64).
 2. Unzip it — you'll get `luaia.exe`.
 3. Run it from a terminal:
 
@@ -180,7 +180,7 @@ Rules are individually toggleable optimizations. Most are on by default; pass `R
 | `RemoveRedundantParens` | | Remove redundant parentheses |
 | `LocalizeGlobals` | `--no-localize` | Hoist global function references into local variables |
 | `LocalizeBooleans` | `--no-bools` | Replace repeated `true`/`false` literals with aliased locals |
-| `LocalizeStrings` | `--no-strings` | Replace string literals repeated more than three times with aliased locals |
+| `LocalizeStrings` | `--no-strings` | Store string literals repeated more than three times in one local table |
 | `DeadCodeElimination` | `--no-dce` | Fold constant conditions, drop dead branches, and remove unused locals |
 | `RenameTableKeys` | `--table-keys` | Rename table fields to short names (off by default) |
 | `TableConstantFolding` | `--table-fold` | Fold reads of immutable table literals (off by default) |
@@ -314,17 +314,17 @@ local a=10;local b=20;print(a+b);myFunc=function(c,d)local e=c+d;return e;end;
 
 ## Benchmarks
 
-Input: 17.6kb
---
+Run the repeatable parser, transformer, and generator benchmark with:
 
-Runs | Total | Avg/Run
------|-------|--------
-   1x |   9ms |    9ms
-  10x |  90ms |    9ms
-  50x | 398ms |    8ms
- 100x | 808ms |    8ms
+```sh
+lune run benchmarks/run.luau
+lune run benchmarks/run.luau --runs 20 --warmup 5
+```
 
-Measure yourself with `lune run bin/cli.lua test/input.lua -t`.
+It reports separate timings for each phase on tiny, medium, and large fixtures. The
+`all-rules` configuration additionally enables table-key renaming and table constant
+folding. The other configurations disable individual optimization families to help
+locate regressions. Use the same machine and runtime when comparing changes.
 
 
 ## Project Structure
@@ -332,6 +332,7 @@ Measure yourself with `lune run bin/cli.lua test/input.lua -t`.
 ```
 src/
   init.luau          Public API
+  AstWalker.luau     Shared AST traversal
   Parser.luau        Wraps LuauParser with storeCstData = false
   Transformer.luau   AST optimizations (folding, renaming)
   VariablePacker.luau Lowers locals into per-function tables
@@ -343,6 +344,9 @@ bin/
 tests/
   run.luau           Test runner
   suites/luaia.luau  Test cases
+benchmarks/
+  run.luau           Phase timing benchmark
+  fixtures.luau      Representative source fixtures
 ```
 
 ## Contributing

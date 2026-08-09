@@ -1,4 +1,5 @@
 local Utils = require("./utils")
+local AstWalker = require("./AstWalker")
 
 local Transformer = {}
 
@@ -240,419 +241,128 @@ local function BuildHoistStat(key: string)
 	}
 end
 
-local function WalkGlobalUses(node, context, counts, chosen, globals, mutated, mutatedBases, rewrite)
-	if type(node) ~= "table" or node.kind == nil then
-		return node
+local function GlobalChildContext(node, field)
+	if node.kind == "StatAssign" and field == "vars"
+		or node.kind == "StatCompoundAssign" and field == "var"
+		or node.kind == "StatFunction" and field == "name" then
+		return "target"
+	elseif node.kind == "ExprIndexName" and field == "expr"
+		or node.kind == "ExprIndexExpr" and field == "expr"
+		or node.kind == "ExprCall" and field == "func" and node.self then
+		return "skip"
 	end
+	return "value"
+end
 
-	if rewrite then
-		if context == "value" and IsLocalizableRef(node) and chosen[RefKey(node)] then
-			local key = RefKey(node)
-			return {
-				kind = "ExprLocal",
-				location = node.location,
-				["local"] = {
-					name = key,
-					location = node.location,
-					functionDepth = 0,
-					loopDepth = 0,
-					isConst = false,
-					isExported = false,
-				},
-				upvalue = false,
-			}
-		end
-	elseif context == "value" and counts and IsLocalizableRef(node) then
-		local key = RefKey(node)
-		counts[key] = (counts[key] or 0) + 1
-	elseif context == "target" and mutated and IsLocalizableRef(node) then
-		if node.kind == "ExprGlobal" then
-			mutated[node.name] = true
-			if mutatedBases then
-				mutatedBases[node.name] = true
+local function WalkGlobalUses(node, _, counts, chosen, globals, mutated, mutatedBases, rewrite)
+	return AstWalker.Walk(node, function(current, context)
+		if rewrite then
+			if context == "value" and IsLocalizableRef(current) and chosen[RefKey(current)] then
+				local key = RefKey(current)
+				return {
+					kind = "ExprLocal",
+					location = current.location,
+					["local"] = {
+						name = key,
+						location = current.location,
+						functionDepth = 0,
+						loopDepth = 0,
+						isConst = false,
+						isExported = false,
+					},
+					upvalue = false,
+				}
 			end
-		else
-			mutated[RefKey(node)] = true
-		end
-	end
-
-	if node.kind == "ExprGlobal" then
-		if globals then
-			globals[node.name] = true
-		end
-	elseif node.kind == "ExprIndexName" then
-		node.expr = WalkGlobalUses(node.expr, "skip", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "ExprIndexExpr" then
-		node.expr = WalkGlobalUses(node.expr, "skip", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.index = WalkGlobalUses(node.index, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "ExprCall" then
-		if node.self then
-			node.func = WalkGlobalUses(node.func, "skip", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		else
-			node.func = WalkGlobalUses(node.func, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-		for i, arg in node.args do
-			node.args[i] = WalkGlobalUses(arg, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-	elseif node.kind == "ExprFunction" then
-		if node.body then
-			node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-	elseif node.kind == "ExprTable" then
-		for i, item in node.items do
-			if item.kind == "List" then
-				item.value = WalkGlobalUses(item.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-			elseif item.kind == "Record" then
-				item.value = WalkGlobalUses(item.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-			elseif item.kind == "General" then
-				if item.key then
-					item.key = WalkGlobalUses(item.key, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+		elseif context == "value" and counts and IsLocalizableRef(current) then
+			local key = RefKey(current)
+			counts[key] = (counts[key] or 0) + 1
+		elseif context == "target" and mutated and IsLocalizableRef(current) then
+			if current.kind == "ExprGlobal" then
+				mutated[current.name] = true
+				if mutatedBases then
+					mutatedBases[current.name] = true
 				end
-				item.value = WalkGlobalUses(item.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
+			else
+				mutated[RefKey(current)] = true
 			end
 		end
-	elseif node.kind == "ExprUnary" then
-		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "ExprBinary" then
-		node.left = WalkGlobalUses(node.left, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.right = WalkGlobalUses(node.right, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "ExprTypeAssertion" then
-		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "ExprIfElse" then
-		node.condition = WalkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.trueExpr = WalkGlobalUses(node.trueExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.falseExpr = WalkGlobalUses(node.falseExpr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "ExprInterpString" then
-		for i, expr in node.expressions do
-			node.expressions[i] = WalkGlobalUses(expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-	elseif node.kind == "ExprGroup" then
-		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "ExprInstantiate" then
-		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "StatBlock" then
-		for i, stat in node.body do
-			node.body[i] = WalkGlobalUses(stat, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-	elseif node.kind == "StatIf" then
-		node.condition = WalkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.thenbody = WalkGlobalUses(node.thenbody, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		if node.elsebody then
-			node.elsebody = WalkGlobalUses(node.elsebody, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-	elseif node.kind == "StatWhile" then
-		node.condition = WalkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "StatRepeat" then
-		node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.condition = WalkGlobalUses(node.condition, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "StatFor" then
-		node.from = WalkGlobalUses(node.from, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.to = WalkGlobalUses(node.to, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		if node.step then
-			node.step = WalkGlobalUses(node.step, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-		node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "StatForIn" then
-		for i, value in node.values do
-			node.values[i] = WalkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-		node.body = WalkGlobalUses(node.body, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "StatLocal" then
-		for i, value in node.values do
-			node.values[i] = WalkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-	elseif node.kind == "StatAssign" then
-		for i, target in node.vars do
-			node.vars[i] = WalkGlobalUses(target, "target", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-		for i, value in node.values do
-			node.values[i] = WalkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-	elseif node.kind == "StatCompoundAssign" then
-		node.var = WalkGlobalUses(node.var, "target", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.value = WalkGlobalUses(node.value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "StatReturn" then
-		for i, value in node.list do
-			node.list[i] = WalkGlobalUses(value, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		end
-	elseif node.kind == "StatExpr" then
-		node.expr = WalkGlobalUses(node.expr, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "StatFunction" then
-		node.name = WalkGlobalUses(node.name, "target", counts, chosen, globals, mutated, mutatedBases, rewrite)
-		node.func = WalkGlobalUses(node.func, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	elseif node.kind == "StatLocalFunction" then
-		node.func = WalkGlobalUses(node.func, "value", counts, chosen, globals, mutated, mutatedBases, rewrite)
-	end
 
-	return node
+		if current.kind == "ExprGlobal" and globals then
+			globals[current.name] = true
+		end
+		return current
+	end, "value", GlobalChildContext)
 end
 
 local function WalkBooleanUses(node, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	if type(node) ~= "table" or node.kind == nil then
-		return node
-	end
 	if collect == nil then
 		collect = not returnsOnly
 	end
-
-	if node.kind == "ExprConstantBool" then
-		if collect and rewrite then
-			local name = node.value and trueName or falseName
-			return {
-				kind = "ExprLocal",
-				location = node.location,
-				["local"] = {
-					name = name,
-					location = node.location,
-					functionDepth = 0,
-					loopDepth = 0,
-					isConst = false,
-					isExported = false,
-				},
-				upvalue = false,
-			}
-		elseif collect then
-			if node.value then
-				counts["true"] = counts["true"] + 1
-			else
-				counts["false"] = counts["false"] + 1
+	return AstWalker.Walk(node, function(current, shouldCollect)
+		if current.kind == "ExprConstantBool" then
+			if shouldCollect and rewrite then
+				local name = current.value and trueName or falseName
+				return {
+					kind = "ExprLocal",
+					location = current.location,
+					["local"] = {
+						name = name,
+						location = current.location,
+						functionDepth = 0,
+						loopDepth = 0,
+						isConst = false,
+						isExported = false,
+					},
+					upvalue = false,
+				}
+			elseif shouldCollect then
+				local key = current.value and "true" or "false"
+				counts[key] += 1
 			end
 		end
-	end
-
-	if node.kind == "ExprIndexName" then
-		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "ExprIndexExpr" then
-		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.index = WalkBooleanUses(node.index, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "ExprCall" then
-		node.func = WalkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		for i, arg in node.args do
-			node.args[i] = WalkBooleanUses(arg, counts, rewrite, trueName, falseName, returnsOnly, collect)
+		return current
+	end, collect, function(parent, field, shouldCollect)
+		if parent.kind == "StatReturn" and field == "list" then
+			return returnsOnly and true or shouldCollect
 		end
-	elseif node.kind == "ExprFunction" then
-		if node.body then
-			node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		end
-	elseif node.kind == "ExprTable" then
-		for i, item in node.items do
-			if item.kind == "List" then
-				item.value = WalkBooleanUses(item.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
-			elseif item.kind == "Record" then
-				item.value = WalkBooleanUses(item.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
-			elseif item.kind == "General" then
-				if item.key then
-					item.key = WalkBooleanUses(item.key, counts, rewrite, trueName, falseName, returnsOnly, collect)
-				end
-				item.value = WalkBooleanUses(item.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
-			end
-		end
-	elseif node.kind == "ExprUnary" then
-		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "ExprBinary" then
-		node.left = WalkBooleanUses(node.left, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.right = WalkBooleanUses(node.right, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "ExprTypeAssertion" then
-		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "ExprIfElse" then
-		node.condition = WalkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.trueExpr = WalkBooleanUses(node.trueExpr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.falseExpr = WalkBooleanUses(node.falseExpr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "ExprInterpString" then
-		for i, expr in node.expressions do
-			node.expressions[i] = WalkBooleanUses(expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		end
-	elseif node.kind == "ExprGroup" then
-		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "ExprInstantiate" then
-		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "StatBlock" then
-		for i, stat in node.body do
-			node.body[i] = WalkBooleanUses(stat, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		end
-	elseif node.kind == "StatIf" then
-		node.condition = WalkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.thenbody = WalkBooleanUses(node.thenbody, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		if node.elsebody then
-			node.elsebody = WalkBooleanUses(node.elsebody, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		end
-	elseif node.kind == "StatWhile" then
-		node.condition = WalkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "StatRepeat" then
-		node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.condition = WalkBooleanUses(node.condition, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "StatFor" then
-		node.from = WalkBooleanUses(node.from, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.to = WalkBooleanUses(node.to, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		if node.step then
-			node.step = WalkBooleanUses(node.step, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		end
-		node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "StatForIn" then
-		for i, value in node.values do
-			node.values[i] = WalkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		end
-		node.body = WalkBooleanUses(node.body, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "StatLocal" then
-		for i, value in node.values do
-			node.values[i] = WalkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		end
-	elseif node.kind == "StatAssign" then
-		for i, target in node.vars do
-			node.vars[i] = WalkBooleanUses(target, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		end
-		for i, value in node.values do
-			node.values[i] = WalkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		end
-	elseif node.kind == "StatCompoundAssign" then
-		node.var = WalkBooleanUses(node.var, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.value = WalkBooleanUses(node.value, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "StatReturn" then
-		for i, value in node.list do
-			node.list[i] = WalkBooleanUses(value, counts, rewrite, trueName, falseName, returnsOnly, returnsOnly and true or collect)
-		end
-	elseif node.kind == "StatExpr" then
-		node.expr = WalkBooleanUses(node.expr, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "StatFunction" then
-		node.name = WalkBooleanUses(node.name, counts, rewrite, trueName, falseName, returnsOnly, collect)
-		node.func = WalkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	elseif node.kind == "StatLocalFunction" then
-		node.func = WalkBooleanUses(node.func, counts, rewrite, trueName, falseName, returnsOnly, collect)
-	end
-
-	return node
+		return shouldCollect
+	end)
 end
 
 local function WalkStringUses(node, counts, rewrite, names)
-	if type(node) ~= "table" or node.kind == nil then
-		return node
-	end
-
-	if node.kind == "ExprConstantString" then
-		if rewrite and names[node.value] then
-			local name = names[node.value]
-			return {
-				kind = "ExprLocal",
-				location = node.location,
-				["local"] = {
-					name = name,
-					location = node.location,
-					functionDepth = 0,
-					loopDepth = 0,
-					isConst = false,
-					isExported = false,
-				},
-				upvalue = false,
-			}
-		elseif not rewrite then
-			counts[node.value] = (counts[node.value] or 0) + 1
-		end
-	end
-
-	if node.kind == "ExprIndexName" then
-		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
-	elseif node.kind == "ExprIndexExpr" then
-		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
-		node.index = WalkStringUses(node.index, counts, rewrite, names)
-	elseif node.kind == "ExprCall" then
-		node.func = WalkStringUses(node.func, counts, rewrite, names)
-		for i, arg in node.args do
-			node.args[i] = WalkStringUses(arg, counts, rewrite, names)
-		end
-	elseif node.kind == "ExprFunction" then
-		if node.body then
-			node.body = WalkStringUses(node.body, counts, rewrite, names)
-		end
-	elseif node.kind == "ExprTable" then
-		for _, item in node.items do
-			if item.kind == "List" then
-				item.value = WalkStringUses(item.value, counts, rewrite, names)
-			elseif item.kind == "Record" then
-				item.value = WalkStringUses(item.value, counts, rewrite, names)
-			elseif item.kind == "General" then
-				if item.key then
-					item.key = WalkStringUses(item.key, counts, rewrite, names)
-				end
-				item.value = WalkStringUses(item.value, counts, rewrite, names)
+	return AstWalker.Walk(node, function(current)
+		if current.kind == "ExprConstantString" then
+			if rewrite and names[current.value] then
+				local entry = names[current.value]
+				return {
+					kind = "ExprIndexExpr",
+					location = current.location,
+					expr = {
+						kind = "ExprLocal",
+						location = current.location,
+						["local"] = {
+							name = entry.name,
+							location = current.location,
+							functionDepth = 0,
+							loopDepth = 0,
+							isConst = false,
+							isExported = false,
+						},
+						upvalue = false,
+					},
+					index = {
+						kind = "ExprConstantInteger",
+						location = current.location,
+						low = entry.index,
+						high = 0,
+					},
+				}
+			elseif not rewrite then
+				counts[current.value] = (counts[current.value] or 0) + 1
 			end
 		end
-	elseif node.kind == "ExprUnary" then
-		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
-	elseif node.kind == "ExprBinary" then
-		node.left = WalkStringUses(node.left, counts, rewrite, names)
-		node.right = WalkStringUses(node.right, counts, rewrite, names)
-	elseif node.kind == "ExprTypeAssertion" then
-		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
-	elseif node.kind == "ExprIfElse" then
-		node.condition = WalkStringUses(node.condition, counts, rewrite, names)
-		node.trueExpr = WalkStringUses(node.trueExpr, counts, rewrite, names)
-		node.falseExpr = WalkStringUses(node.falseExpr, counts, rewrite, names)
-	elseif node.kind == "ExprInterpString" then
-		for i, expr in node.expressions do
-			node.expressions[i] = WalkStringUses(expr, counts, rewrite, names)
-		end
-	elseif node.kind == "ExprGroup" then
-		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
-	elseif node.kind == "ExprInstantiate" then
-		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
-	elseif node.kind == "StatBlock" then
-		for i, stat in node.body do
-			node.body[i] = WalkStringUses(stat, counts, rewrite, names)
-		end
-	elseif node.kind == "StatIf" then
-		node.condition = WalkStringUses(node.condition, counts, rewrite, names)
-		node.thenbody = WalkStringUses(node.thenbody, counts, rewrite, names)
-		if node.elsebody then
-			node.elsebody = WalkStringUses(node.elsebody, counts, rewrite, names)
-		end
-	elseif node.kind == "StatWhile" then
-		node.condition = WalkStringUses(node.condition, counts, rewrite, names)
-		node.body = WalkStringUses(node.body, counts, rewrite, names)
-	elseif node.kind == "StatRepeat" then
-		node.body = WalkStringUses(node.body, counts, rewrite, names)
-		node.condition = WalkStringUses(node.condition, counts, rewrite, names)
-	elseif node.kind == "StatFor" then
-		node.from = WalkStringUses(node.from, counts, rewrite, names)
-		node.to = WalkStringUses(node.to, counts, rewrite, names)
-		if node.step then
-			node.step = WalkStringUses(node.step, counts, rewrite, names)
-		end
-		node.body = WalkStringUses(node.body, counts, rewrite, names)
-	elseif node.kind == "StatForIn" then
-		for i, value in node.values do
-			node.values[i] = WalkStringUses(value, counts, rewrite, names)
-		end
-		node.body = WalkStringUses(node.body, counts, rewrite, names)
-	elseif node.kind == "StatLocal" then
-		for i, value in node.values do
-			node.values[i] = WalkStringUses(value, counts, rewrite, names)
-		end
-	elseif node.kind == "StatAssign" then
-		for i, target in node.vars do
-			node.vars[i] = WalkStringUses(target, counts, rewrite, names)
-		end
-		for i, value in node.values do
-			node.values[i] = WalkStringUses(value, counts, rewrite, names)
-		end
-	elseif node.kind == "StatCompoundAssign" then
-		node.var = WalkStringUses(node.var, counts, rewrite, names)
-		node.value = WalkStringUses(node.value, counts, rewrite, names)
-	elseif node.kind == "StatReturn" then
-		for i, value in node.list do
-			node.list[i] = WalkStringUses(value, counts, rewrite, names)
-		end
-	elseif node.kind == "StatExpr" then
-		node.expr = WalkStringUses(node.expr, counts, rewrite, names)
-	elseif node.kind == "StatFunction" then
-		node.name = WalkStringUses(node.name, counts, rewrite, names)
-		node.func = WalkStringUses(node.func, counts, rewrite, names)
-	elseif node.kind == "StatLocalFunction" then
-		node.func = WalkStringUses(node.func, counts, rewrite, names)
-	end
-
-	return node
+		return current
+	end)
 end
 
 local TransformStatement: (typeof(node)) -> typeof(node)
@@ -1797,7 +1507,12 @@ local function DCEMakeBoolNode(location, value)
 	}
 end
 
-local function DCECollectAssigned(node, assigned)
+local DCECollectAssigned
+-- Branch folding asks for assignment sets after processing the same blocks.
+-- Cache the structure-only result for the lifetime of one transform.
+local DCEAssignedCache: { [any]: { [any]: boolean } } = {}
+
+local function DCECollectAssignedImpl(node, assigned)
 	if type(node) ~= "table" or node.kind == nil then
 		return
 	end
@@ -1910,6 +1625,23 @@ local function DCECollectAssigned(node, assigned)
 			assigned[node.name] = true
 		end
 		DCECollectAssigned(node.func, assigned)
+	end
+end
+
+DCECollectAssigned = function(node, assigned)
+	local cached = DCEAssignedCache[node]
+	if cached then
+		for localName in cached do
+			assigned[localName] = true
+		end
+		return
+	end
+
+	local collected = {}
+	DCECollectAssignedImpl(node, collected)
+	DCEAssignedCache[node] = collected
+	for localName in collected do
+		assigned[localName] = true
 	end
 end
 
@@ -3207,6 +2939,7 @@ end
 function Transformer.Transform(ast)
 	VariableMap = {}
 	NameGenerator:Reset()
+	DCEAssignedCache = {}
 
 	if Transformer.Options.Rules.DeadCodeElimination then
 		if Transformer.Options.Rules.TableConstantFolding then
@@ -3343,35 +3076,44 @@ function Transformer.Transform(ast)
 		table_sort(values)
 
 		local names = {}
-		local vars = {}
-		local localValues = {}
+		local tableName = "Strings"
+		local tableItems = {}
 		local loc = { begin = { x = 0, y = 0 }, end_ = { x = 0, y = 0 } }
 		for i, value in values do
-			local localName = "luaia_string_" .. i
-			names[value] = localName
-			VariableMap[localName] = NameGenerator:Generate()
-			table_insert(vars, {
-				name = localName,
-				location = loc,
-				functionDepth = 0,
-				loopDepth = 0,
-				isConst = false,
-				isExported = false,
-			})
-			table_insert(localValues, {
-				kind = "ExprConstantString",
-				location = loc,
-				value = value,
-				quoteStyle = 0,
+			names[value] = { name = tableName, index = i }
+			table_insert(tableItems, {
+				kind = "List",
+				value = {
+					kind = "ExprConstantString",
+					location = loc,
+					value = value,
+					quoteStyle = 0,
+				},
 			})
 		end
 
+		VariableMap[tableName] = NameGenerator:Generate()
 		WalkStringUses(ast, counts, true, names)
 		table_insert(ast.body, 1, {
 			kind = "StatLocal",
 			location = loc,
-			vars = vars,
-			values = localValues,
+			vars = {
+				{
+					name = tableName,
+					location = loc,
+					functionDepth = 0,
+					loopDepth = 0,
+					isConst = false,
+					isExported = false,
+				},
+			},
+			values = {
+				{
+					kind = "ExprTable",
+					location = loc,
+					items = tableItems,
+				},
+			},
 			isConst = false,
 			isExported = false,
 			equalsSignLocation = {},
