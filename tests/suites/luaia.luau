@@ -97,7 +97,7 @@ test.suite("luaia", function()
 		end)
 
 		test.case("should rename variables to lowercase random names", function()
-			local result, errors = luaia.Minify("local MyVariable = 1\nprint(MyVariable)")
+			local result, errors = luaia.Minify("local MyVariable = foo()\nprint(MyVariable)")
 			check.not_nil(result)
 			check.equal(errors, nil)
 			check.equal(string.find(result, "MyVariable", 1, true), nil)

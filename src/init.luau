@@ -20,9 +20,10 @@ local DefaultRules = {
 	DeadCodeElimination = true,
 	RenameTableKeys = false,
 	TableConstantFolding = false,
+	InlineSingleUse = true,
 }
 
-function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boolean?, ConstantFold: boolean?, RemoveRedundantParens: boolean?, LocalizeGlobals: boolean?, LocalizeBooleans: boolean?, LocalizeStrings: boolean?, DeadCodeElimination: boolean?, RenameTableKeys: boolean?, TableConstantFolding: boolean? }? }?): (string?, { string }?)
+function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boolean?, ConstantFold: boolean?, RemoveRedundantParens: boolean?, LocalizeGlobals: boolean?, LocalizeBooleans: boolean?, LocalizeStrings: boolean?, DeadCodeElimination: boolean?, RenameTableKeys: boolean?, TableConstantFolding: boolean?, InlineSingleUse: boolean? }? }?): (string?, { string }?)
 	Transformer.Options.Rules = table.clone(DefaultRules)
 
 	if Options then
@@ -53,6 +54,9 @@ function luaia.Minify(Source: string, Options: { Rules: { MinifyVariables: boole
 			end
 			if Options.Rules.TableConstantFolding ~= nil then
 				Transformer.Options.Rules.TableConstantFolding = Options.Rules.TableConstantFolding
+			end
+			if Options.Rules.InlineSingleUse ~= nil then
+				Transformer.Options.Rules.InlineSingleUse = Options.Rules.InlineSingleUse
 			end
 		end
 	end

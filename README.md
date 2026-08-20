@@ -57,6 +57,7 @@ When running from source, replace `luaia` with `lune run bin/cli.lua`.
 | `--no-bools` | Disable boolean localization |
 | `--no-strings` | Disable repeated string localization |
 | `--no-dce` | Disable dead-code elimination |
+| `--no-inline-single-use` | Disable inlining of constant locals |
 | `--table-keys` | Enable table-key renaming |
 | `--table-fold` | Enable table constant folding |
 | `--pack-locals` | Pack locals into tables |
@@ -79,6 +80,7 @@ local result, errors = luaia.Minify(source, {
         DeadCodeElimination = true,
         RenameTableKeys = false,
         TableConstantFolding = false,
+        InlineSingleUse = true,
     },
 })
 ```
@@ -92,6 +94,18 @@ exceed Luau's 200-local-per-function limit. It is also available as
 Most rules are enabled by default. `RenameTableKeys` and
 `TableConstantFolding` are disabled by default.
 
+`InlineSingleUse` inlines locals whose value is a constant expression (no
+function calls, table literals, or other side effects) into every use site and
+drops the declaration, so they fold away entirely. For example:
+
+```lua
+local A = 5 + 5
+local B = A * 2
+print(A, B)
+```
+
+minifies to `print(10,20)`.
+
 | Rule | CLI flag | Description |
 |------|----------|-------------|
 | `MinifyVariables` | `--no-rename` | Rename local variables to short names |
@@ -101,6 +115,7 @@ Most rules are enabled by default. `RenameTableKeys` and
 | `LocalizeBooleans` | `--no-bools` | Localize repeated boolean literals |
 | `LocalizeStrings` | `--no-strings` | Store repeated strings in one local table |
 | `DeadCodeElimination` | `--no-dce` | Fold dead branches and remove unused locals |
+| `InlineSingleUse` | `--no-inline-single-use` | Inline constant locals into their uses |
 | `RenameTableKeys` | `--table-keys` | Rename safely isolated table fields |
 | `TableConstantFolding` | `--table-fold` | Fold reads from immutable table literals |
 

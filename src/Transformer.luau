@@ -8,6 +8,7 @@ local string_find = string.find
 local string_sub = string.sub
 local table_clone = table.clone
 local table_insert = table.insert
+local table_remove = table.remove
 local table_sort = table.sort
 
 Transformer.Options = {
@@ -21,6 +22,7 @@ Transformer.Options = {
 		DeadCodeElimination = true,
 		RenameTableKeys = false,
 		TableConstantFolding = false,
+		InlineSingleUse = true,
 	},
 }
 
@@ -51,6 +53,39 @@ local function FoldConstantBinary(left: number, op: string, right: number): numb
 		end
 	elseif op == ".." then
 		return nil
+	end
+	return nil
+end
+
+-- Evaluates a constant expression node into a Lua value.
+-- Returns (value, isConst). `isConst` is false when the node is not a
+-- statically-known constant, so callers can distinguish `nil` (a constant)
+-- from "we don't know this value".
+local function EvalConstNode(node): (any, boolean)
+	if node == nil or node.kind == "ExprConstantNil" then
+		return nil, true
+	elseif node.kind == "ExprConstantBool" then
+		return node.value, true
+	elseif node.kind == "ExprConstantNumber" then
+		return node.value, true
+	elseif node.kind == "ExprConstantInteger" then
+		return node.low, true
+	elseif node.kind == "ExprConstantString" then
+		return node.value, true
+	end
+	return nil, false
+end
+
+-- Builds a constant expression node back from an evaluated Lua value.
+local function BuildConstNode(location, value)
+	if value == nil then
+		return { kind = "ExprConstantNil", location = location }
+	elseif type(value) == "boolean" then
+		return { kind = "ExprConstantBool", location = location, value = value }
+	elseif type(value) == "number" then
+		return { kind = "ExprConstantNumber", location = location, value = value, parseResult = "Ok" }
+	elseif type(value) == "string" then
+		return { kind = "ExprConstantString", location = location, value = value }
 	end
 	return nil
 end
@@ -170,7 +205,7 @@ local function StripUnaryOperand(node)
 	return StripBinaryOperand(node, UnaryPrecedence, false)
 end
 
-local MinimumGlobalUses = 1
+local MinimumGlobalUses = 2
 
 local function IsLocalizableRef(node): boolean
 	if node.kind == "ExprGlobal" then
@@ -519,11 +554,24 @@ local function TransformExpression(node): typeof(node)
 		}
 
 	elseif node.kind == "ExprUnary" then
+		local inner = StripUnaryOperand(TransformExpression(node.expr))
+		if Transformer.Options.Rules.ConstantFold then
+			local v, isConst = EvalConstNode(inner)
+			if isConst then
+				if node.op == 0 then -- not
+					return BuildConstNode(node.location, not v)
+				elseif node.op == 1 and type(v) == "number" then -- unary minus
+					return BuildConstNode(node.location, -v)
+				elseif node.op == 2 and type(v) == "string" then -- len
+					return BuildConstNode(node.location, #v)
+				end
+			end
+		end
 		return {
 			kind = "ExprUnary",
 			location = node.location,
 			op = node.op,
-			expr = StripUnaryOperand(TransformExpression(node.expr)),
+			expr = inner,
 		}
 
 	elseif node.kind == "ExprBinary" then
@@ -547,6 +595,55 @@ local function TransformExpression(node): typeof(node)
 							value = result,
 							parseResult = "Ok",
 						}
+					end
+				end
+			end
+
+			-- ".." on constant strings
+			if node.op == 7 then
+				local l, lc = EvalConstNode(left)
+				local r, rc = EvalConstNode(right)
+				if lc and rc and type(l) == "string" and type(r) == "string" then
+					return BuildConstNode(node.location, l .. r)
+				end
+			end
+
+			-- comparisons (==, ~=, <, <=, >, >=)
+			if node.op >= 8 and node.op <= 13 then
+				local l, lc = EvalConstNode(left)
+				local r, rc = EvalConstNode(right)
+				local comparable = lc and rc and type(l) == type(r)
+					and (node.op <= 9 or type(l) == "number" or type(l) == "string")
+				if comparable then
+					local result
+					if node.op == 8 then
+						result = l ~= r
+					elseif node.op == 9 then
+						result = l == r
+					elseif node.op == 10 then
+						result = l < r
+					elseif node.op == 11 then
+						result = l <= r
+					elseif node.op == 12 then
+						result = l > r
+					elseif node.op == 13 then
+						result = l >= r
+					end
+					return BuildConstNode(node.location, result)
+				end
+			end
+
+			-- and / or: fold when the controlling operand is a constant
+			if node.op == 14 or node.op == 15 then
+				local l, lc = EvalConstNode(left)
+				if lc then
+					local lFalsy = (l == false or l == nil)
+					if (node.op == 14 and lFalsy) or (node.op == 15 and not lFalsy) then
+						return left
+					end
+					local r, rc = EvalConstNode(right)
+					if rc then
+						return right
 					end
 				end
 			end
@@ -2936,6 +3033,221 @@ local function TransformTableKeys(ast)
 	RewriteTableKeyPass(ast)
 end
 
+-- // Inline constant locals
+--
+-- Locals bound to a constant expression (side-effect free and deterministic)
+-- are inlined into every use site and their declaration is dropped, so they
+-- "fold into non-existence". This is safe because a constant value can be
+-- duplicated and moved freely — the later constant-fold pass collapses each
+-- copy back into a literal.
+
+local InlineChildFields = {
+	List = { "value" },
+	Record = { "value" },
+	General = { "key", "value" },
+	ExprIndexName = { "expr" },
+	ExprIndexExpr = { "expr", "index" },
+	ExprCall = { "func", "args" },
+	ExprFunction = { "body" },
+	ExprTable = { "items" },
+	ExprUnary = { "expr" },
+	ExprBinary = { "left", "right" },
+	ExprTypeAssertion = { "expr" },
+	ExprIfElse = { "condition", "trueExpr", "falseExpr" },
+	ExprInterpString = { "expressions" },
+	ExprGroup = { "expr" },
+	ExprInstantiate = { "expr" },
+	StatBlock = { "body" },
+	StatIf = { "condition", "thenbody", "elsebody" },
+	StatWhile = { "condition", "body" },
+	StatRepeat = { "body", "condition" },
+	StatFor = { "from", "to", "step", "body" },
+	StatForIn = { "values", "body" },
+	StatLocal = { "values" },
+	StatAssign = { "vars", "values" },
+	StatCompoundAssign = { "var", "value" },
+	StatReturn = { "list" },
+	StatExpr = { "expr" },
+	StatFunction = { "name", "func" },
+	StatLocalFunction = { "func" },
+}
+
+-- True when `node` is a constant expression: side-effect free, deterministic,
+-- and safe to duplicate and move anywhere.
+local function IsInlineableConst(node, constSet): boolean
+	if type(node) ~= "table" or node.kind == nil then
+		return false
+	end
+	if node.kind == "ExprConstantNil" or node.kind == "ExprConstantBool"
+		or node.kind == "ExprConstantNumber" or node.kind == "ExprConstantInteger"
+		or node.kind == "ExprConstantString" then
+		return true
+	elseif node.kind == "ExprLocal" then
+		return constSet[node["local"]] == true
+	elseif node.kind == "ExprGroup" then
+		return IsInlineableConst(node.expr, constSet)
+	elseif node.kind == "ExprUnary" then
+		return IsInlineableConst(node.expr, constSet)
+	elseif node.kind == "ExprBinary" then
+		return IsInlineableConst(node.left, constSet)
+			and IsInlineableConst(node.right, constSet)
+	elseif node.kind == "ExprTypeAssertion" then
+		return IsInlineableConst(node.expr, constSet)
+	elseif node.kind == "ExprIfElse" then
+		return IsInlineableConst(node.condition, constSet)
+			and IsInlineableConst(node.trueExpr, constSet)
+			and IsInlineableConst(node.falseExpr, constSet)
+	elseif node.kind == "ExprInterpString" then
+		for _, part in node.expressions do
+			if not IsInlineableConst(part, constSet) then
+				return false
+			end
+		end
+		return true
+	end
+	return false
+end
+
+-- True when `block` (or any nested block / function) assigns to `target`.
+local function LocalIsAssigned(block, target): boolean
+	local found = false
+	AstWalker.Walk(block, function(current)
+		if found then
+			return current
+		end
+		if current.kind == "StatAssign" then
+			for _, v in current.vars do
+				if v.kind == "ExprLocal" and v["local"] == target then
+					found = true
+					break
+				end
+			end
+		elseif current.kind == "StatCompoundAssign" then
+			local v = current.var
+			if v.kind == "ExprLocal" and v["local"] == target then
+				found = true
+			end
+		end
+		return current
+	end)
+	return found
+end
+
+local function CloneNode(node)
+	if type(node) ~= "table" then
+		return node
+	end
+	local clone = {}
+	for k, v in node do
+		if k == "local" and node.kind == "ExprLocal" then
+			clone[k] = v
+		else
+			clone[k] = CloneNode(v)
+		end
+	end
+	return clone
+end
+
+-- Replaces every reference to `target` inside `node` (in place) with a fresh
+-- clone of `replacement`.
+local function ReplaceLocalUses(node, target, replacement)
+	return AstWalker.Walk(node, function(current)
+		if current.kind == "ExprLocal" and current["local"] == target then
+			return CloneNode(replacement)
+		end
+		return current
+	end)
+end
+
+local ProcessNode: (any) -> ()
+
+-- Inlines constant locals declared directly in `block`, then recurses into
+-- nested blocks and function bodies.
+local function InlineBlock(block)
+	-- Compute the set of constant locals. The "never reassigned" check is
+	-- folded into constness so a reassigned local is never inlined, even if
+	-- its initial value was a constant (a later use could observe the new
+	-- value).
+	local constSet = {}
+	local candidates = {}
+	for _, stat in block.body do
+		if stat.kind == "StatLocal" and #stat.vars == 1 and #stat.values == 1
+			and not stat.vars[1].isExported then
+			table_insert(candidates, stat)
+		end
+	end
+
+	local changed = true
+	while changed do
+		changed = false
+		for _, stat in candidates do
+			local var = stat.vars[1]
+			if not constSet[var]
+				and not LocalIsAssigned(block, var)
+				and IsInlineableConst(stat.values[1], constSet) then
+				constSet[var] = true
+				changed = true
+			end
+		end
+	end
+
+	-- Inline in source order: any referenced constant is declared earlier and
+	-- has already been substituted, so the value we splice in is literal.
+	local body = block.body
+	local i = 1
+	while i <= #body do
+		local stat = body[i]
+		if stat.kind == "StatLocal" and #stat.vars == 1 and #stat.values == 1 then
+			local var = stat.vars[1]
+			if constSet[var] then
+				ReplaceLocalUses(block, var, stat.values[1])
+				table_remove(body, i)
+			else
+				i += 1
+			end
+		else
+			i += 1
+		end
+	end
+
+	-- Recurse into nested blocks / function bodies.
+	for _, stat in block.body do
+		ProcessNode(stat)
+	end
+end
+
+ProcessNode = function(node)
+	if type(node) ~= "table" or node.kind == nil then
+		return
+	end
+	if node.kind == "StatBlock" then
+		InlineBlock(node)
+		return
+	elseif node.kind == "ExprFunction" then
+		InlineBlock(node.body)
+		return
+	elseif node.kind == "StatFunction" or node.kind == "StatLocalFunction" then
+		InlineBlock(node.func.body)
+		return
+	end
+	for _, field in InlineChildFields[node.kind] or {} do
+		local child = node[field]
+		if type(child) == "table" then
+			if child.kind ~= nil then
+				ProcessNode(child)
+			else
+				for _, item in child do
+					ProcessNode(item)
+				end
+			end
+		end
+	end
+end
+
+local function RunInlineSingleUse(ast)
+	InlineBlock(ast)
+end
+
 function Transformer.Transform(ast)
 	VariableMap = {}
 	NameGenerator:Reset()
@@ -2990,6 +3302,10 @@ function Transformer.Transform(ast)
 		for name in pairs(globals) do
 			NameGenerator:Reserve(name)
 		end
+	end
+
+	if Transformer.Options.Rules.InlineSingleUse then
+		RunInlineSingleUse(ast)
 	end
 
 	if Transformer.Options.Rules.ConstantFold then

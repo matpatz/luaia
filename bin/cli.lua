@@ -30,6 +30,7 @@ if #args == 0 then
 	print("  --no-bools     Disable boolean literal localization")
 	print("  --no-strings   Disable repeated string localization")
 	print("  --no-dce       Disable dead code elimination")
+	print("  --no-inline-single-use  Disable inlining of constant locals")
 	print("  --table-keys   Enable table field renaming (off by default)")
 	print("  --table-fold   Enable table constant folding (off by default)")
 	print("  --pack-locals  Store locals in tables to bypass Luau's local limit")
@@ -55,6 +56,7 @@ local Options = {
 	RenameTableKeys = false,
 	TableConstantFolding = false,
 	PackLocals = false,
+	InlineSingleUse = true,
 }
 
 local i = 1
@@ -85,6 +87,7 @@ while i <= #args do
 		print("  --no-bools     Disable boolean literal localization")
 		print("  --no-strings   Disable repeated string localization")
 		print("  --no-dce       Disable dead code elimination")
+		print("  --no-inline-single-use  Disable inlining of constant locals")
 		print("  --table-keys   Enable table field renaming (off by default)")
 		print("  --table-fold   Enable table constant folding (off by default)")
 		print("  --pack-locals  Store locals in tables to bypass Luau's local limit")
@@ -115,6 +118,8 @@ while i <= #args do
 		Options.LocalizeStrings = false
 	elseif arg == "--no-dce" then
 		Options.DeadCodeElimination = false
+	elseif arg == "--no-inline-single-use" then
+		Options.InlineSingleUse = false
 	elseif arg == "--table-keys" then
 		Options.RenameTableKeys = true
 	elseif arg == "--table-fold" then
@@ -159,6 +164,7 @@ else
 			DeadCodeElimination = Options.DeadCodeElimination,
 			RenameTableKeys = Options.RenameTableKeys,
 			TableConstantFolding = Options.TableConstantFolding,
+			InlineSingleUse = Options.InlineSingleUse,
 		},
 	})
 end
