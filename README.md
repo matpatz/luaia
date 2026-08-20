@@ -11,7 +11,7 @@ Add luaia to `rokit.toml`:
 
 ```toml
 [tools]
-luaia = "matpatz/luaia@0.5.0"
+luaia = "matpatz/luaia@0.6.0"
 ```
 
 Then run:
